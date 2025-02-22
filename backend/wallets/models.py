@@ -15,6 +15,19 @@ class Wallet(models.Model):
 
     def __str__(self):
         return f"{self.user.username}'s Wallet"
+    
+class WalletCategory(models.Model):
+    name = models.CharField(max_length=100)
+    wallet = models.ForeignKey(Wallet, related_name='categories', on_delete=models.CASCADE)
+    created_by = models.ForeignKey(User, related_name='created_categories', on_delete=models.CASCADE)
+    type = models.CharField(max_length=10, choices=[
+        ('income', 'income'),
+        ('expense', 'expense'),
+        ('both', 'both'),
+    ])
+
+    def __str__(self):
+        return self.name
 
 class Transaction(models.Model):
     note = models.CharField(max_length=100)
@@ -32,6 +45,7 @@ class Transaction(models.Model):
     date = models.DateTimeField(auto_now_add=True)
     wallet = models.ForeignKey(Wallet, related_name='transactions', on_delete=models.CASCADE)
     created_by = models.ForeignKey(User, related_name='created_transactions', on_delete=models.CASCADE)
+    category = models.ForeignKey(WalletCategory, related_name='transactions', on_delete=models.CASCADE, default=1)
 
     def __str__(self):
         return self.note
