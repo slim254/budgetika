@@ -3,6 +3,7 @@ from .views import (
     WalletList, WalletDetail,
     WalletTransactionList, WalletTransactionDetail,
     UserCategoryList, UserCategoryDetail,
+    UserTagList, UserTagDetail,
     TransactionDetail, TransactionCreate,
 )
 
@@ -20,6 +21,9 @@ urlpatterns = [
     # AFTER:
     path('categories/', UserCategoryList.as_view(), name='category-list'),
     path('categories/<uuid:pk>/', UserCategoryDetail.as_view(), name='category-detail'),
+
+    path('tags/', UserTagList.as_view(), name='tag-list'),
+    path('tags/<uuid:pk>/', UserTagDetail.as_view(), name='tag-detail'),
 
     # Direct transaction routes
     path('transactions/', TransactionCreate.as_view(), name='transaction-create'),

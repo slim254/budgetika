@@ -8,10 +8,11 @@ import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/com
 import { Button } from "@/components/ui/button";
 import { useRouter } from "next/navigation";
 import { useAuthContext } from "@/contexts/AuthProvider";
-import { Wallet as WalletIcon, LogOut, Plus, TrendingUp, TrendingDown } from "lucide-react";
+import { Wallet as WalletIcon, Plus, TrendingUp, TrendingDown } from "lucide-react";
+import { UserMenu } from "@/components/UserMenu";
 
 export default function DashboardPage() {
-    const { session, logout } = useAuthContext();
+    const { session } = useAuthContext();
     const [wallets, setWallets] = useState<Wallet[]>([]);
     const [isLoading, setIsLoading] = useState<boolean>(true);
     const router = useRouter();
@@ -34,11 +35,6 @@ export default function DashboardPage() {
         }
     }, [session]);
 
-    function handleLogout() {
-        logout();
-        router.push("/login");
-    }
-
     const totalBalance = wallets.reduce((sum, wallet) => sum + Number(wallet.balance), 0);
     const positiveWallets = wallets.filter(w => Number(w.balance) >= 0).length;
     const negativeWallets = wallets.filter(w => Number(w.balance) < 0).length;
@@ -53,10 +49,7 @@ export default function DashboardPage() {
                                 <h1 className="text-2xl font-bold text-gray-900">Dashboard</h1>
                                 <p className="text-sm text-gray-500">Welcome back, {session?.user.username}</p>
                             </div>
-                            <Button variant="outline" onClick={handleLogout}>
-                                <LogOut className="mr-2 h-4 w-4" />
-                                Logout
-                            </Button>
+                            <UserMenu />
                         </div>
                     </div>
                 </header>

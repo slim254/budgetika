@@ -23,6 +23,12 @@ export interface Category {
     transaction_count: number;
 }
 
+export interface Tag {
+    id: string;
+    name: string;
+    transaction_count: number;
+}
+
 export interface Transaction {
     id: string;
     note: string;
@@ -30,6 +36,7 @@ export interface Transaction {
     currency: Currency;
     date: string;
     category: Category | null;
+    tags: Tag[];
 }
 
 // Form data types for creating/updating
@@ -39,6 +46,7 @@ export interface TransactionFormData {
     currency: Currency;
     date: string;
     category: string | null;
+    tag_ids: string[];
 }
 
 export interface WalletFormData {

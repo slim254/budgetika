@@ -3,8 +3,8 @@ from django.shortcuts import get_object_or_404
 from rest_framework import generics
 from rest_framework.permissions import IsAuthenticated
 from rest_framework_simplejwt.authentication import JWTAuthentication
-from .models import Transaction, Wallet, UserTransactionCategory
-from .serializers import TransactionSerializer, WalletSerializer, CategorySerializer
+from .models import Transaction, UserTransactionTag, Wallet, UserTransactionCategory
+from .serializers import TagSerializer, TransactionSerializer, WalletSerializer, CategorySerializer
 
 
 class WalletDetail(generics.RetrieveUpdateDestroyAPIView):
@@ -292,6 +292,48 @@ class UserCategoryList(generics.ListCreateAPIView):
     def perform_create(self, serializer):
         """Set user automatically."""
         serializer.save(user=self.request.user)
+
+
+class UserTagList(generics.ListCreateAPIView):
+    """
+    List all user's tags or create a new one.
+
+    GET /api/tags/ - List all tags
+    POST /api/tags/ - Create new tag
+
+    Tags are user-scoped (shared across all wallets).
+    """
+    serializer_class = TagSerializer
+    permission_classes = [IsAuthenticated]
+    authentication_classes = [JWTAuthentication]
+
+    def get_queryset(self):
+        """Return tags for authenticated user only."""
+        return UserTransactionTag.objects.filter(
+            user=self.request.user,
+        )
+
+    def perform_create(self, serializer):
+        """Set user automatically."""
+        serializer.save(user=self.request.user)
+
+
+
+class UserTagDetail(generics.RetrieveUpdateDestroyAPIView):
+    """
+    Retrieve, update, or delete a tag.
+
+    GET /api/tags/{id}/ - Get tag details
+    PUT /api/tags/{id}/ - Update tag
+    DELETE /api/tags/{id}/ - Delete tag
+    """
+    serializer_class = TagSerializer
+    permission_classes = [IsAuthenticated]
+    authentication_classes = [JWTAuthentication]
+
+    def get_queryset(self):
+        """Return only user's tags."""
+        return UserTransactionTag.objects.filter(user=self.request.user)
 
 
 class UserCategoryDetail(generics.RetrieveUpdateDestroyAPIView):

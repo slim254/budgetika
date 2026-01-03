@@ -2,7 +2,7 @@
 
 import { useState, useEffect, FormEvent } from "react";
 import { axiosInstance } from "@/api/axiosInstance";
-import { Transaction, Category, Currency, TransactionFormData } from "@/models/wallets";
+import { Transaction, Category, Tag, Currency, TransactionFormData } from "@/models/wallets";
 import {
   Dialog,
   DialogContent,
@@ -21,16 +21,36 @@ import {
   SelectValue,
 } from "@/components/ui/select";
 import { Switch } from "@/components/ui/switch";
+import {
+  Popover,
+  PopoverContent,
+  PopoverTrigger,
+} from "@/components/ui/popover";
+import {
+  Command,
+  CommandEmpty,
+  CommandGroup,
+  CommandInput,
+  CommandItem,
+  CommandList,
+} from "@/components/ui/command";
+import { Check, ChevronsUpDown, Plus } from "lucide-react";
+import { cn } from "@/lib/utils";
 
 interface TransactionDialogProps {
   open: boolean;
   onOpenChange: (open: boolean) => void;
   onClose: () => void;
   onSaved: () => void;
+  onCategoriesChanged: () => void;
+  onTagsChanged: () => void;
   transaction: Transaction | null;
   walletId: string;
   categories: Category[];
+  tags: Tag[];
   currency: Currency;
+  keepOpen: boolean;
+  onKeepOpenChange: (keepOpen: boolean) => void;
 }
 
 export function TransactionDialog({
@@ -38,14 +58,18 @@ export function TransactionDialog({
   onOpenChange,
   onClose,
   onSaved,
+  onCategoriesChanged,
+  onTagsChanged,
   transaction,
   walletId,
   categories,
+  tags,
   currency,
+  keepOpen,
+  onKeepOpenChange,
 }: TransactionDialogProps) {
   const [isLoading, setIsLoading] = useState<boolean>(false);
   const [error, setError] = useState<string>("");
-  const [keepOpen, setKeepOpen] = useState<boolean>(false);
   // Track type separately since we need to apply it to amount sign
   const [transactionType, setTransactionType] = useState<"income" | "expense">("expense");
   const [formData, setFormData] = useState<TransactionFormData>({
@@ -54,31 +78,161 @@ export function TransactionDialog({
     currency: currency,
     date: new Date().toISOString().split("T")[0],
     category: null,
+    tag_ids: [],
   });
 
-  useEffect(() => {
-    if (transaction) {
-      // Determine type from amount sign
-      const isIncome = Number(transaction.amount) > 0;
-      setTransactionType(isIncome ? "income" : "expense");
-      setFormData({
-        note: transaction.note,
-        amount: Math.abs(Number(transaction.amount)),  // Store absolute value in form
-        currency: transaction.currency,
-        date: transaction.date.split("T")[0],  // Handle ISO date format
-        category: transaction.category?.id || null,
-      });
-    } else {
-      setTransactionType("expense");
-      setFormData({
-        note: "",
-        amount: 0,
-        currency: currency,
-        date: new Date().toISOString().split("T")[0],
-        category: null,
-      });
+  // Category combobox state
+  const [categoryOpen, setCategoryOpen] = useState(false);
+  const [categorySearch, setCategorySearch] = useState("");
+
+  // Create category dialog state
+  const [createCategoryOpen, setCreateCategoryOpen] = useState(false);
+  const [newCategoryName, setNewCategoryName] = useState("");
+  const [isCreatingCategory, setIsCreatingCategory] = useState(false);
+  const [createCategoryError, setCreateCategoryError] = useState("");
+
+  // Tag combobox state
+  const [tagOpen, setTagOpen] = useState(false);
+  const [tagSearch, setTagSearch] = useState("");
+
+  // Create tag dialog state
+  const [createTagOpen, setCreateTagOpen] = useState(false);
+  const [newTagName, setNewTagName] = useState("");
+  const [isCreatingTag, setIsCreatingTag] = useState(false);
+  const [createTagError, setCreateTagError] = useState("");
+
+  // Filter categories based on search
+  const filteredCategories = categories.filter((cat) =>
+    cat.name.toLowerCase().includes(categorySearch.toLowerCase())
+  );
+
+  // Check if "uncategorized" matches the search
+  const showUncategorized = !categorySearch ||
+    "uncategorized".includes(categorySearch.toLowerCase());
+
+  // Show create option when searching and no exact match exists
+  const showCreateOption = categorySearch.trim() &&
+    !categories.some((cat) => cat.name.toLowerCase() === categorySearch.toLowerCase().trim());
+
+  // Get selected category name for display
+  const selectedCategory = categories.find((cat) => cat.id === formData.category);
+
+  // Filter tags based on search
+  const filteredTags = tags.filter((tag) =>
+    tag.name.toLowerCase().includes(tagSearch.toLowerCase())
+  );
+
+  // Show create tag option when searching and no exact match exists
+  const showCreateTagOption = tagSearch.trim() &&
+    !tags.some((tag) => tag.name.toLowerCase() === tagSearch.toLowerCase().trim());
+
+  // Get selected tags for display
+  const selectedTags = tags.filter((tag) => formData.tag_ids.includes(tag.id));
+
+  async function handleCreateCategory() {
+    if (!newCategoryName.trim()) {
+      setCreateCategoryError("Category name is required");
+      return;
     }
-    setError("");
+
+    setIsCreatingCategory(true);
+    setCreateCategoryError("");
+
+    try {
+      const response = await axiosInstance.post<Category>("wallets/categories/", {
+        name: newCategoryName.trim(),
+      });
+      // Select the newly created category
+      setFormData({ ...formData, category: response.data.id });
+      setCreateCategoryOpen(false);
+      setNewCategoryName("");
+      setCategorySearch("");
+      onCategoriesChanged(); // Refresh categories list
+    } catch (err) {
+      console.error("Failed to create category:", err);
+      setCreateCategoryError("Failed to create category. Please try again.");
+    } finally {
+      setIsCreatingCategory(false);
+    }
+  }
+
+  function handleOpenCreateCategory() {
+    setNewCategoryName(categorySearch); // Pre-fill with current search
+    setCategoryOpen(false);
+    setCreateCategoryOpen(true);
+  }
+
+  async function handleCreateTag() {
+    if (!newTagName.trim()) {
+      setCreateTagError("Tag name is required");
+      return;
+    }
+
+    setIsCreatingTag(true);
+    setCreateTagError("");
+
+    try {
+      const response = await axiosInstance.post<Tag>("wallets/tags/", {
+        name: newTagName.trim(),
+      });
+      // Add the newly created tag to selected tags
+      setFormData({ ...formData, tag_ids: [...formData.tag_ids, response.data.id] });
+      setCreateTagOpen(false);
+      setNewTagName("");
+      setTagSearch("");
+      onTagsChanged(); // Refresh tags list
+    } catch (err) {
+      console.error("Failed to create tag:", err);
+      setCreateTagError("Failed to create tag. Please try again.");
+    } finally {
+      setIsCreatingTag(false);
+    }
+  }
+
+  function handleOpenCreateTag() {
+    setNewTagName(tagSearch); // Pre-fill with current search
+    setTagOpen(false);
+    setCreateTagOpen(true);
+  }
+
+  function handleToggleTag(tagId: string) {
+    if (formData.tag_ids.includes(tagId)) {
+      setFormData({ ...formData, tag_ids: formData.tag_ids.filter(id => id !== tagId) });
+    } else {
+      setFormData({ ...formData, tag_ids: [...formData.tag_ids, tagId] });
+    }
+  }
+
+  // Reset form when dialog opens or transaction changes
+  useEffect(() => {
+    if (open) {
+      if (transaction) {
+        // Determine type from amount sign
+        const isIncome = Number(transaction.amount) > 0;
+        setTransactionType(isIncome ? "income" : "expense");
+        setFormData({
+          note: transaction.note,
+          amount: Math.abs(Number(transaction.amount)),  // Store absolute value in form
+          currency: transaction.currency,
+          date: transaction.date.split("T")[0],  // Handle ISO date format
+          category: transaction.category?.id || null,
+          tag_ids: transaction.tags?.map(t => t.id) || [],
+        });
+      } else {
+        setTransactionType("expense");
+        setFormData({
+          note: "",
+          amount: 0,
+          currency: currency,
+          date: new Date().toISOString().split("T")[0],
+          category: null,
+          tag_ids: [],
+        });
+      }
+      setError("");
+      setCategorySearch("");
+      setTagSearch("");
+    }
   }, [transaction, currency, open]);
 
   async function handleSubmit(e: FormEvent<HTMLFormElement>) {
@@ -98,6 +252,7 @@ export function TransactionDialog({
         currency: formData.currency,
         date: formData.date,
         category_id: formData.category,  // Backend expects category_id for write
+        tag_ids: formData.tag_ids,  // Backend expects tag_ids for write
         wallet: walletId,
       };
 
@@ -117,6 +272,7 @@ export function TransactionDialog({
             currency: currency,
             date: new Date().toISOString().split("T")[0],
             category: formData.category, // Keep category for convenience
+            tag_ids: formData.tag_ids, // Keep tags for convenience
           });
           // Don't close - user can continue adding
         } else {
@@ -132,6 +288,7 @@ export function TransactionDialog({
   }
 
   return (
+    <>
     <Dialog open={open} onOpenChange={onOpenChange}>
       <DialogContent className="sm:max-w-[500px]">
         <DialogHeader>
@@ -193,28 +350,161 @@ export function TransactionDialog({
           </div>
 
           <div className="space-y-2">
-            <Label htmlFor="category">Category (Optional)</Label>
-            <Select
-              value={formData.category || "none"}
-              onValueChange={(value) =>
-                setFormData({
-                  ...formData,
-                  category: value === "none" ? null : value,
-                })
-              }
-            >
-              <SelectTrigger id="category">
-                <SelectValue placeholder="Select category" />
-              </SelectTrigger>
-              <SelectContent>
-                <SelectItem value="none">Uncategorized</SelectItem>
-                {categories.map((cat) => (
-                  <SelectItem key={cat.id} value={cat.id}>
-                    {cat.name}
-                  </SelectItem>
+            <Label>Category (Optional)</Label>
+            <Popover open={categoryOpen} onOpenChange={setCategoryOpen}>
+              <PopoverTrigger asChild>
+                <Button
+                  variant="outline"
+                  role="combobox"
+                  aria-expanded={categoryOpen}
+                  className="w-full justify-between font-normal"
+                  disabled={isLoading}
+                >
+                  {selectedCategory ? selectedCategory.name : "Select category..."}
+                  <ChevronsUpDown className="ml-2 h-4 w-4 shrink-0 opacity-50" />
+                </Button>
+              </PopoverTrigger>
+              <PopoverContent className="w-[--radix-popover-trigger-width] p-0" align="start">
+                <Command shouldFilter={false}>
+                  <CommandInput
+                    placeholder="Search categories..."
+                    value={categorySearch}
+                    onValueChange={setCategorySearch}
+                  />
+                  <CommandList>
+                    {!showUncategorized && filteredCategories.length === 0 && !showCreateOption && (
+                      <CommandEmpty>No category found.</CommandEmpty>
+                    )}
+                    <CommandGroup>
+                      {showUncategorized && (
+                        <CommandItem
+                          value=""
+                          onSelect={() => {
+                            setFormData({ ...formData, category: null });
+                            setCategoryOpen(false);
+                          }}
+                        >
+                          <Check
+                            className={cn(
+                              "mr-2 h-4 w-4",
+                              !formData.category ? "opacity-100" : "opacity-0"
+                            )}
+                          />
+                          Uncategorized
+                        </CommandItem>
+                      )}
+                      {filteredCategories.map((cat) => (
+                        <CommandItem
+                          key={cat.id}
+                          value={cat.id}
+                          onSelect={() => {
+                            setFormData({ ...formData, category: cat.id });
+                            setCategoryOpen(false);
+                            setCategorySearch("");
+                          }}
+                        >
+                          <Check
+                            className={cn(
+                              "mr-2 h-4 w-4",
+                              formData.category === cat.id ? "opacity-100" : "opacity-0"
+                            )}
+                          />
+                          {cat.name}
+                        </CommandItem>
+                      ))}
+                      {showCreateOption && (
+                        <CommandItem
+                          onSelect={handleOpenCreateCategory}
+                          className="text-primary"
+                        >
+                          <Plus className="mr-2 h-4 w-4" />
+                          Create &ldquo;{categorySearch}&rdquo;
+                        </CommandItem>
+                      )}
+                    </CommandGroup>
+                  </CommandList>
+                </Command>
+              </PopoverContent>
+            </Popover>
+          </div>
+
+          <div className="space-y-2">
+            <Label>Tags (Optional)</Label>
+            <Popover open={tagOpen} onOpenChange={setTagOpen}>
+              <PopoverTrigger asChild>
+                <Button
+                  variant="outline"
+                  role="combobox"
+                  aria-expanded={tagOpen}
+                  className="w-full justify-between font-normal"
+                  disabled={isLoading}
+                >
+                  {selectedTags.length > 0
+                    ? selectedTags.map(t => t.name).join(", ")
+                    : "Select tags..."}
+                  <ChevronsUpDown className="ml-2 h-4 w-4 shrink-0 opacity-50" />
+                </Button>
+              </PopoverTrigger>
+              <PopoverContent className="w-[--radix-popover-trigger-width] p-0" align="start">
+                <Command shouldFilter={false}>
+                  <CommandInput
+                    placeholder="Search tags..."
+                    value={tagSearch}
+                    onValueChange={setTagSearch}
+                  />
+                  <CommandList>
+                    {filteredTags.length === 0 && !showCreateTagOption && (
+                      <CommandEmpty>No tags found.</CommandEmpty>
+                    )}
+                    <CommandGroup>
+                      {filteredTags.map((tag) => (
+                        <CommandItem
+                          key={tag.id}
+                          value={tag.id}
+                          onSelect={() => handleToggleTag(tag.id)}
+                        >
+                          <Check
+                            className={cn(
+                              "mr-2 h-4 w-4",
+                              formData.tag_ids.includes(tag.id) ? "opacity-100" : "opacity-0"
+                            )}
+                          />
+                          {tag.name}
+                        </CommandItem>
+                      ))}
+                      {showCreateTagOption && (
+                        <CommandItem
+                          onSelect={handleOpenCreateTag}
+                          className="text-primary"
+                        >
+                          <Plus className="mr-2 h-4 w-4" />
+                          Create &ldquo;{tagSearch}&rdquo;
+                        </CommandItem>
+                      )}
+                    </CommandGroup>
+                  </CommandList>
+                </Command>
+              </PopoverContent>
+            </Popover>
+            {selectedTags.length > 0 && (
+              <div className="flex flex-wrap gap-1 mt-2">
+                {selectedTags.map((tag) => (
+                  <span
+                    key={tag.id}
+                    className="inline-flex items-center gap-1 px-2 py-0.5 rounded text-xs font-medium bg-blue-100 text-blue-800"
+                  >
+                    {tag.name}
+                    <button
+                      type="button"
+                      onClick={() => handleToggleTag(tag.id)}
+                      className="hover:text-blue-600"
+                    >
+                      ×
+                    </button>
+                  </span>
                 ))}
-              </SelectContent>
-            </Select>
+              </div>
+            )}
           </div>
 
           <div className="space-y-2">
@@ -243,7 +533,7 @@ export function TransactionDialog({
                 <Switch
                   id="keep-open"
                   checked={keepOpen}
-                  onCheckedChange={setKeepOpen}
+                  onCheckedChange={onKeepOpenChange}
                 />
                 <Label htmlFor="keep-open" className="text-sm text-muted-foreground cursor-pointer">
                   Keep open
@@ -271,5 +561,102 @@ export function TransactionDialog({
         </form>
       </DialogContent>
     </Dialog>
+
+    {/* Create Category Dialog - separate from main dialog to avoid nesting issues */}
+    <Dialog open={createCategoryOpen} onOpenChange={setCreateCategoryOpen}>
+      <DialogContent className="sm:max-w-[400px]">
+        <DialogHeader>
+          <DialogTitle>Create Category</DialogTitle>
+          <DialogDescription>
+            Add a new category for your transactions.
+          </DialogDescription>
+        </DialogHeader>
+        <div className="space-y-4 py-4">
+          <div className="space-y-2">
+            <Label htmlFor="new-category-name">Name</Label>
+            <Input
+              id="new-category-name"
+              placeholder="e.g., Groceries"
+              value={newCategoryName}
+              onChange={(e) => setNewCategoryName(e.target.value)}
+              onKeyDown={(e) => {
+                if (e.key === "Enter") {
+                  e.preventDefault();
+                  handleCreateCategory();
+                }
+              }}
+              disabled={isCreatingCategory}
+              autoFocus
+            />
+          </div>
+          {createCategoryError && (
+            <div className="text-sm text-red-600 bg-red-50 p-3 rounded-md">
+              {createCategoryError}
+            </div>
+          )}
+        </div>
+        <div className="flex justify-end gap-3">
+          <Button
+            variant="outline"
+            onClick={() => setCreateCategoryOpen(false)}
+            disabled={isCreatingCategory}
+          >
+            Cancel
+          </Button>
+          <Button onClick={handleCreateCategory} disabled={isCreatingCategory}>
+            {isCreatingCategory ? "Creating..." : "Create"}
+          </Button>
+        </div>
+      </DialogContent>
+    </Dialog>
+
+    {/* Create Tag Dialog */}
+    <Dialog open={createTagOpen} onOpenChange={setCreateTagOpen}>
+      <DialogContent className="sm:max-w-[400px]">
+        <DialogHeader>
+          <DialogTitle>Create Tag</DialogTitle>
+          <DialogDescription>
+            Add a new tag for your transactions.
+          </DialogDescription>
+        </DialogHeader>
+        <div className="space-y-4 py-4">
+          <div className="space-y-2">
+            <Label htmlFor="new-tag-name">Name</Label>
+            <Input
+              id="new-tag-name"
+              placeholder="e.g., vacation"
+              value={newTagName}
+              onChange={(e) => setNewTagName(e.target.value)}
+              onKeyDown={(e) => {
+                if (e.key === "Enter") {
+                  e.preventDefault();
+                  handleCreateTag();
+                }
+              }}
+              disabled={isCreatingTag}
+              autoFocus
+            />
+          </div>
+          {createTagError && (
+            <div className="text-sm text-red-600 bg-red-50 p-3 rounded-md">
+              {createTagError}
+            </div>
+          )}
+        </div>
+        <div className="flex justify-end gap-3">
+          <Button
+            variant="outline"
+            onClick={() => setCreateTagOpen(false)}
+            disabled={isCreatingTag}
+          >
+            Cancel
+          </Button>
+          <Button onClick={handleCreateTag} disabled={isCreatingTag}>
+            {isCreatingTag ? "Creating..." : "Create"}
+          </Button>
+        </div>
+      </DialogContent>
+    </Dialog>
+    </>
   );
 }

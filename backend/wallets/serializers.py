@@ -1,5 +1,5 @@
 from rest_framework import serializers
-from .models import Transaction, Wallet, UserTransactionCategory
+from .models import Transaction, UserTransactionTag, Wallet, UserTransactionCategory
 from django.db.models import Sum
 
 
@@ -19,39 +19,67 @@ class CategorySerializer(serializers.ModelSerializer):
     def get_transaction_count(self, obj):
         """Number of transactions using this category."""
         return obj.transactions.count()
+    
+class TagSerializer(serializers.ModelSerializer):
+    """
+    Serializer for user-scoped tags.
+
+    Tags are shared across all user's wallets.
+    """
+    transaction_count = serializers.SerializerMethodField()
+
+    class Meta:
+        model = UserTransactionTag
+        fields = ['id', 'name', 'transaction_count']
+        read_only_fields = ['id']
+
+    def get_transaction_count(self, obj):
+        """Number of transactions using this tag."""
+        return obj.transactions.count()
 
 
 class TransactionSerializer(serializers.ModelSerializer):
     """
-    Serializer for Transaction model - handles conversion between Python objects
-    and JSON for API requests/responses.
+    Serializer for Transaction model.
 
-    This serializer only exposes specific fields (not the 'created_by' field) to
-    prevent users from seeing who created other transactions (though they could
-    infer it from timestamps).
+    Read fields: category (nested), tags (nested array)
+    Write fields: category_id (UUID), tag_ids (array of UUIDs)
 
-    The validate() method ensures that all transactions in a wallet use the same
-    currency, preventing mixed-currency transactions which would break balance
-    calculations.
+    The validate() method ensures transaction currency matches wallet currency.
 
-    Example JSON:
+    Example request JSON:
         {
-            "id": 1,
             "note": "Weekly groceries",
-            "amount": "150.50",
-            "transaction_type": "expense",
+            "amount": "-150.50",
+            "currency": "usd",
+            "category_id": "uuid-here",
+            "tag_ids": ["uuid-1", "uuid-2"]
+        }
+
+    Example response JSON:
+        {
+            "id": "uuid",
+            "note": "Weekly groceries",
+            "amount": "-150.50",
             "currency": "usd",
             "date": "2025-12-05T10:30:00Z",
-            "category": 1
+            "category": {"id": "...", "name": "Food", ...},
+            "tags": [{"id": "...", "name": "groceries", ...}]
         }
     """
     category = CategorySerializer(read_only=True)
     category_id = serializers.UUIDField(write_only=True, required=False, allow_null=True)
+    tags = TagSerializer(many=True, read_only=True)
+    tag_ids = serializers.ListField(
+        child=serializers.UUIDField(),
+        write_only=True,
+        required=False,
+        default=[]
+    )
 
     class Meta:
         model = Transaction
-        fields = ['note', 'amount', 'currency', 'id', 'date', 'category', 'category_id']
-
+        fields = ['note', 'amount', 'currency', 'id', 'date', 'category', 'category_id', 'tags', 'tag_ids']
     def validate_category_id(self, value):
         """Ensure category belongs to the user."""
         if value:
@@ -59,22 +87,40 @@ class TransactionSerializer(serializers.ModelSerializer):
             if not UserTransactionCategory.objects.filter(id=value, user=user).exists():
                 raise serializers.ValidationError("Category not found or doesn't belong to you.")
         return value
+    
+    def validate_tag_ids(self, value):
+        """Ensure all tags belong to the user."""
+        user = self.context['request'].user
+        for tag_id in value:
+            if not UserTransactionTag.objects.filter(id=tag_id, user=user).exists():
+                raise serializers.ValidationError(f"Tag with id {tag_id} not found or doesn't belong to you.")
+        return value
 
     def create(self, validated_data):
-        """Handle category_id when creating transaction."""
+        """Handle category_id and tag_ids when creating transaction."""
         category_id = validated_data.pop('category_id', None)
+        tag_ids = validated_data.pop('tag_ids', [])
         if category_id:
             validated_data['category'] = UserTransactionCategory.objects.get(id=category_id)
-        return super().create(validated_data)
+        instance = super().create(validated_data)
+        if tag_ids:
+            tags = UserTransactionTag.objects.filter(id__in=tag_ids, user=self.context['request'].user)
+            instance.tags.set(tags)
+        return instance
 
     def update(self, instance, validated_data):
-        """Handle category_id when updating transaction."""
+        """Handle category_id and tag_ids when updating transaction."""
         category_id = validated_data.pop('category_id', None)
+        tag_ids = validated_data.pop('tag_ids', None)
         if category_id:
             validated_data['category'] = UserTransactionCategory.objects.get(id=category_id)
         elif category_id is None and 'category_id' in self.initial_data:
             validated_data['category'] = None
-        return super().update(instance, validated_data)
+        instance = super().update(instance, validated_data)
+        if tag_ids is not None:
+            tags = UserTransactionTag.objects.filter(id__in=tag_ids, user=self.context['request'].user)
+            instance.tags.set(tags)
+        return instance
 
     def validate(self, data):
         """

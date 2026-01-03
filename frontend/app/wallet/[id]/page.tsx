@@ -6,9 +6,10 @@ import { Button } from "@/components/ui/button";
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/components/ui/card";
 import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from "@/components/ui/table";
 import { ArrowLeft, Plus, Edit, Trash2, TrendingUp, TrendingDown } from "lucide-react";
+import { UserMenu } from "@/components/UserMenu";
 import { useParams, useRouter, useSearchParams } from "next/navigation";
 import { useEffect, useState } from "react";
-import { Wallet, Transaction, Category } from "@/models/wallets";
+import { Wallet, Transaction, Category, Tag } from "@/models/wallets";
 import { TransactionDialog } from "@/components/TransactionDialog";
 import MonthSelector from "@/components/MonthSelector";
 
@@ -16,9 +17,11 @@ export default function WalletPage() {
   const [wallet, setWallet] = useState<Wallet | null>(null);
   const [transactions, setTransactions] = useState<Transaction[]>([]);
   const [categories, setCategories] = useState<Category[]>([]);
+  const [tags, setTags] = useState<Tag[]>([]);
   const [isLoading, setIsLoading] = useState<boolean>(true);
   const [dialogOpen, setDialogOpen] = useState<boolean>(false);
   const [editingTransaction, setEditingTransaction] = useState<Transaction | null>(null);
+  const [keepDialogOpen, setKeepDialogOpen] = useState<boolean>(false);
   const router = useRouter();
   const params = useParams<{ id: string }>();
   const searchParams = useSearchParams();
@@ -57,9 +60,18 @@ export default function WalletPage() {
     }
   }
 
+  async function fetchTags() {
+    try {
+      const response = await axiosInstance.get<Tag[]>(`wallets/tags/`);
+      setTags(response.data);
+    } catch (error) {
+      console.error("Failed to fetch tags:", error);
+    }
+  }
+
   async function loadData() {
     setIsLoading(true);
-    await Promise.all([fetchWallet(), fetchTransactions(), fetchCategories()]);
+    await Promise.all([fetchWallet(), fetchTransactions(), fetchCategories(), fetchTags()]);
     setIsLoading(false);
   }
 
@@ -96,6 +108,7 @@ export default function WalletPage() {
   function handleDialogClose() {
     setDialogOpen(false);
     setEditingTransaction(null);
+    setKeepDialogOpen(false);
   }
 
   async function handleTransactionSaved() {
@@ -137,14 +150,16 @@ export default function WalletPage() {
       <div className="min-h-screen bg-gray-50">
         <header className="bg-white shadow-sm">
           <div className="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8 py-4">
-            <Button
-              variant="ghost"
-              size="sm"
-              className="mb-4"
-              onClick={() => router.push("/dashboard")}
-            >
-              <ArrowLeft className="mr-2 h-4 w-4" /> Back to Dashboard
-            </Button>
+            <div className="flex justify-between items-center mb-4">
+              <Button
+                variant="ghost"
+                size="sm"
+                onClick={() => router.push("/dashboard")}
+              >
+                <ArrowLeft className="mr-2 h-4 w-4" /> Back to Dashboard
+              </Button>
+              <UserMenu />
+            </div>
             <div className="flex justify-between items-center">
               <div>
                 <h1 className="text-3xl font-bold text-gray-900">{wallet.name}</h1>
@@ -236,6 +251,7 @@ export default function WalletPage() {
                       <TableHead>Date</TableHead>
                       <TableHead>Note</TableHead>
                       <TableHead>Category</TableHead>
+                      <TableHead>Tags</TableHead>
                       <TableHead>Type</TableHead>
                       <TableHead className="text-right">Amount</TableHead>
                       <TableHead className="text-right">Actions</TableHead>
@@ -251,6 +267,22 @@ export default function WalletPage() {
                           </TableCell>
                           <TableCell>{transaction.note}</TableCell>
                           <TableCell>{transaction.category?.name || 'Uncategorized'}</TableCell>
+                          <TableCell>
+                            {transaction.tags && transaction.tags.length > 0 ? (
+                              <div className="flex flex-wrap gap-1">
+                                {transaction.tags.map((tag) => (
+                                  <span
+                                    key={tag.id}
+                                    className="inline-flex items-center px-2 py-0.5 rounded text-xs font-medium bg-blue-100 text-blue-800"
+                                  >
+                                    {tag.name}
+                                  </span>
+                                ))}
+                              </div>
+                            ) : (
+                              <span className="text-gray-400">—</span>
+                            )}
+                          </TableCell>
                           <TableCell>
                             <span className={`inline-flex items-center px-2.5 py-0.5 rounded-full text-xs font-medium ${
                               isIncome
@@ -299,10 +331,15 @@ export default function WalletPage() {
         onOpenChange={setDialogOpen}
         onClose={handleDialogClose}
         onSaved={handleTransactionSaved}
+        onCategoriesChanged={fetchCategories}
+        onTagsChanged={fetchTags}
         transaction={editingTransaction}
         walletId={params.id}
         categories={categories}
+        tags={tags}
         currency={wallet.currency}
+        keepOpen={keepDialogOpen}
+        onKeepOpenChange={setKeepDialogOpen}
       />
     </ProtectedRoute>
   );

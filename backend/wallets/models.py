@@ -7,22 +7,19 @@ class Wallet(models.Model):
     """
     Represents a user's wallet/budget account.
 
-    Each user has exactly ONE wallet (OneToOneField) which serves as their primary
-    account for tracking income and expenses. The balance is calculated dynamically
-    based on the initial value and all associated transactions (not stored in DB).
+    Each user can have multiple wallets (e.g., "Monthly Budget", "Savings").
+    The balance is calculated dynamically based on the initial value and
+    all associated transactions (not stored in DB).
 
     Attributes:
-        name: Display name for the wallet (e.g., "Monthly Budget", "Savings")
-        user: OneToOne relationship - each user has exactly one wallet
+        name: Display name for the wallet
+        user: Owner of this wallet (ForeignKey - users can have multiple wallets)
         initial_value: Starting balance/amount in the wallet
         currency: Currency code (usd, eur, gbp, pln) - all transactions must use the same currency
-
-    Why OneToOne? This design assumes each user has a single primary wallet.
-    If you need multiple wallets per user, change to ForeignKey.
     """
     id = models.UUIDField(primary_key=True, default=uuid.uuid4, editable=False)
     name = models.CharField(max_length=100)
-    user = models.ForeignKey(User, on_delete=models.CASCADE, related_name='wallet')
+    user = models.ForeignKey(User, on_delete=models.CASCADE, related_name='wallets')
     initial_value = models.DecimalField(max_digits=10, decimal_places=2)
     currency = models.CharField(max_length=3, choices=[
         ('usd', 'usd'),
@@ -66,31 +63,45 @@ class UserTransactionCategory(models.Model):
 
     def __str__(self):
         return self.name
+    
+class UserTransactionTag(models.Model):
+    """
+    Tags for transactions to allow flexible labeling.
+
+    Attributes:
+        name: Tag name (unique per user)
+        user: Owner of this tag
+    """
+    id = models.UUIDField(primary_key=True, default=uuid.uuid4, editable=False)
+    name = models.CharField(max_length=50)
+    user = models.ForeignKey(User, related_name='transaction_tags', on_delete=models.CASCADE)
+
+    class Meta:
+        unique_together = [['name', 'user']]
+        verbose_name_plural = 'tags'
+        ordering = ['name']
+
+    def __str__(self):
+        return self.name
 
 
 class Transaction(models.Model):
     """
-    Individual income or expense transaction record.
+    Individual transaction record.
 
-    Each transaction represents a money flow (in or out) associated with a wallet.
-    Transactions are categorized, timestamped, and tied to the user who created them.
+    Each transaction represents a money flow associated with a wallet.
+    Positive amounts = income, negative amounts = expenses.
+    Transactions can be categorized, tagged, and are tied to the user who created them.
 
     Attributes:
         note: Description of the transaction (e.g., "Weekly groceries")
-        amount: Transaction amount (always positive, type determines if income/expense)
-        transaction_type: 'income' (money in) or 'expense' (money out)
+        amount: Transaction amount (positive for income, negative for expense)
         currency: Must match the wallet's currency (validated in serializer)
         date: Auto-set to creation time. Supports filtering by month/year for reporting
         wallet: ForeignKey to the associated wallet
         created_by: User who created this transaction
-        category: ForeignKey to WalletCategory (currently defaults to id=1)
-
-    Design Note: The date field is set with auto_now_add=True, meaning it cannot
-    be changed after creation. If you need editable dates, remove auto_now_add
-    and set the default to now() instead.
-
-    TODO: The default=1 for category is hardcoded and will fail if no category
-    with id=1 exists. Should be handled in the view or serializer instead.
+        category: Optional ForeignKey to UserTransactionCategory
+        tags: ManyToMany relationship to UserTransactionTag
     """
     id = models.UUIDField(primary_key=True, default=uuid.uuid4, editable=False)
     note = models.CharField(max_length=100)
@@ -111,6 +122,7 @@ class Transaction(models.Model):
         null=True,
         blank=True
     )
+    tags = models.ManyToManyField(UserTransactionTag, related_name='transactions', blank=True)
 
     def __str__(self):
         return self.note
