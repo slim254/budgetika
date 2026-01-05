@@ -1,5 +1,5 @@
 from rest_framework import serializers
-from .models import Transaction, UserTransactionTag, Wallet, UserTransactionCategory
+from .models import Transaction, UserTransactionTag, Wallet, TransactionCategory
 from django.db.models import Sum
 
 
@@ -7,22 +7,67 @@ class CategorySerializer(serializers.ModelSerializer):
     """
     Serializer for user-scoped categories.
 
-    Categories are shared across all user's wallets.
+    DRF EDUCATIONAL NOTE - ModelSerializer
+    ======================================
+    ModelSerializer provides:
+    1. Automatic field generation from model fields
+    2. Built-in create() and update() methods
+    3. Validation based on model field constraints (max_length, null, etc.)
+    4. Automatic handling of ForeignKey/ManyToMany relationships
+
+    Alternative: serializers.Serializer requires manual field definition
+    and explicit create/update methods. Use when you need:
+    - Non-model data structures
+    - Complex custom validation
+    - Different read/write representations
+
+    Read-Only Fields Pattern
+    ========================
+    'id' is read_only because:
+    - Generated automatically (UUIDField with default)
+    - Should never be set by client
+    - Prevents accidental ID manipulation
     """
     transaction_count = serializers.SerializerMethodField()
 
     class Meta:
-        model = UserTransactionCategory
-        fields = ['id', 'name', 'icon', 'color', 'is_archived', 'transaction_count']
+        model = TransactionCategory
+        fields = [
+            'id', 'name', 'icon', 'color',
+            'is_visible', 'is_archived',
+            'transaction_count'
+        ]
         read_only_fields = ['id']
 
     def get_transaction_count(self, obj):
-        """Number of transactions using this category."""
+        """
+        DRF EDUCATIONAL NOTE - SerializerMethodField
+        ============================================
+        SerializerMethodField allows computed/derived fields in responses.
+        The method name must follow the pattern: get_<field_name>
+
+        Performance consideration: This runs a COUNT query for each category.
+        For large datasets, consider:
+        - Prefetching: queryset.prefetch_related('transactions')
+        - Annotation: queryset.annotate(transaction_count=Count('transactions'))
+        """
         return obj.transactions.count()
     
 class TagSerializer(serializers.ModelSerializer):
     """
     Serializer for user-scoped tags.
+
+    DRF EDUCATIONAL NOTE - Serializer Context
+    =========================================
+    The serializer receives 'context' containing:
+    - request: The HTTP request object
+    - view: The view instance
+    - format: The requested format (json, xml, etc.)
+
+    Access via: self.context['request'].user
+
+    This allows user-specific logic in serializers without
+    passing user explicitly to every method.
 
     Tags are shared across all user's wallets.
     """
@@ -30,7 +75,7 @@ class TagSerializer(serializers.ModelSerializer):
 
     class Meta:
         model = UserTransactionTag
-        fields = ['id', 'name', 'transaction_count']
+        fields = ['id', 'name', 'icon', 'color', 'is_visible', 'transaction_count']
         read_only_fields = ['id']
 
     def get_transaction_count(self, obj):
@@ -81,10 +126,21 @@ class TransactionSerializer(serializers.ModelSerializer):
         model = Transaction
         fields = ['note', 'amount', 'currency', 'id', 'date', 'category', 'category_id', 'tags', 'tag_ids']
     def validate_category_id(self, value):
-        """Ensure category belongs to the user."""
+        """
+        DRF EDUCATIONAL NOTE - Field-Level Validation
+        =============================================
+        validate_<field_name>() is called for each field during validation.
+        It receives the field value and should return the validated value
+        or raise serializers.ValidationError.
+
+        Order of validation:
+        1. Field-level validation (validate_<field>)
+        2. Object-level validation (validate())
+        3. Serializer create()/update()
+        """
         if value:
             user = self.context['request'].user
-            if not UserTransactionCategory.objects.filter(id=value, user=user).exists():
+            if not TransactionCategory.objects.filter(id=value, user=user).exists():
                 raise serializers.ValidationError("Category not found or doesn't belong to you.")
         return value
     
@@ -97,11 +153,24 @@ class TransactionSerializer(serializers.ModelSerializer):
         return value
 
     def create(self, validated_data):
-        """Handle category_id and tag_ids when creating transaction."""
+        """
+        DRF EDUCATIONAL NOTE - Custom create() Method
+        =============================================
+        Override create() when you need to:
+        - Handle nested data (like category_id -> category object)
+        - Set fields that aren't directly mapped from request
+        - Handle ManyToMany relationships (must be done after save)
+
+        ManyToMany Note: You can't set M2M fields before save() because
+        the object needs a primary key first. That's why we:
+        1. Pop tag_ids from validated_data
+        2. Create the instance
+        3. Then set the tags using instance.tags.set()
+        """
         category_id = validated_data.pop('category_id', None)
         tag_ids = validated_data.pop('tag_ids', [])
         if category_id:
-            validated_data['category'] = UserTransactionCategory.objects.get(id=category_id)
+            validated_data['category'] = TransactionCategory.objects.get(id=category_id)
         instance = super().create(validated_data)
         if tag_ids:
             tags = UserTransactionTag.objects.filter(id__in=tag_ids, user=self.context['request'].user)
@@ -113,7 +182,7 @@ class TransactionSerializer(serializers.ModelSerializer):
         category_id = validated_data.pop('category_id', None)
         tag_ids = validated_data.pop('tag_ids', None)
         if category_id:
-            validated_data['category'] = UserTransactionCategory.objects.get(id=category_id)
+            validated_data['category'] = TransactionCategory.objects.get(id=category_id)
         elif category_id is None and 'category_id' in self.initial_data:
             validated_data['category'] = None
         instance = super().update(instance, validated_data)

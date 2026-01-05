@@ -3,7 +3,7 @@ from django.shortcuts import get_object_or_404
 from rest_framework import generics
 from rest_framework.permissions import IsAuthenticated
 from rest_framework_simplejwt.authentication import JWTAuthentication
-from .models import Transaction, UserTransactionTag, Wallet, UserTransactionCategory
+from .models import Transaction, UserTransactionTag, Wallet, TransactionCategory
 from .serializers import TagSerializer, TransactionSerializer, WalletSerializer, CategorySerializer
 
 
@@ -273,24 +273,76 @@ class UserCategoryList(generics.ListCreateAPIView):
     """
     List all user's categories or create a new one.
 
-    GET /api/categories/ - List all categories
-    POST /api/categories/ - Create new category
+    GET /api/wallets/categories/ - List all categories
+    POST /api/wallets/categories/ - Create new category
 
-    Categories are user-scoped (shared across all wallets).
+    DRF EDUCATIONAL NOTE - generics.ListCreateAPIView
+    =================================================
+    This class combines:
+    - ListModelMixin: Provides list() method for GET requests
+    - CreateModelMixin: Provides create() method for POST requests
+    - GenericAPIView: Base class with queryset/serializer handling
+
+    Why not ViewSet?
+    ================
+    ViewSet combines all CRUD operations into one class with automatic routing.
+    We use separate APIViews because:
+    1. More explicit URL patterns in urls.py
+    2. Easier to understand for learning DRF
+    3. Fine-grained control over each endpoint
+    4. Better for simple CRUD without complex routing
+
+    Use ViewSet when:
+    - You need all CRUD operations with consistent patterns
+    - Using routers for automatic URL generation
+    - Building larger APIs with many resources
+
+    Query Parameters:
+    - include_hidden=true: Also return is_visible=False categories
     """
     serializer_class = CategorySerializer
     permission_classes = [IsAuthenticated]
     authentication_classes = [JWTAuthentication]
 
     def get_queryset(self):
-        """Return categories for authenticated user only."""
-        return UserTransactionCategory.objects.filter(
+        """
+        DRF EDUCATIONAL NOTE - Permission Classes vs Queryset Filtering
+        ===============================================================
+        Permission classes (IsAuthenticated) control ACCESS to the endpoint.
+        Queryset filtering controls WHAT DATA the user can see.
+
+        Both are needed for proper security:
+        1. IsAuthenticated: Reject unauthenticated requests (401)
+        2. Queryset filter: Only return user's own data (data isolation)
+
+        Without queryset filtering, an authenticated user could see
+        everyone's data - a major security flaw!
+        """
+        include_hidden = self.request.query_params.get('include_hidden', 'false').lower() == 'true'
+
+        queryset = TransactionCategory.objects.filter(
             user=self.request.user,
-            is_archived=False  # Don't show archived by default
+            is_archived=False
         )
 
+        if not include_hidden:
+            queryset = queryset.filter(is_visible=True)
+
+        return queryset
+
     def perform_create(self, serializer):
-        """Set user automatically."""
+        """
+        DRF EDUCATIONAL NOTE - perform_create() Hook
+        ============================================
+        This method is called after validation but before saving.
+        It's the ideal place to:
+        - Set the user from the request (avoiding client manipulation)
+        - Add computed fields
+        - Perform side effects (logging, notifications)
+
+        The serializer.save() call triggers the serializer's create() method
+        and passes any kwargs as additional data.
+        """
         serializer.save(user=self.request.user)
 
 
@@ -298,10 +350,27 @@ class UserTagList(generics.ListCreateAPIView):
     """
     List all user's tags or create a new one.
 
-    GET /api/tags/ - List all tags
-    POST /api/tags/ - Create new tag
+    GET /api/wallets/tags/ - List all tags
+    POST /api/wallets/tags/ - Create new tag
 
-    Tags are user-scoped (shared across all wallets).
+    DRF EDUCATIONAL NOTE - Authentication Classes
+    =============================================
+    authentication_classes = [JWTAuthentication] specifies HOW we
+    authenticate users. Options include:
+
+    - SessionAuthentication: Uses Django sessions (cookies)
+    - BasicAuthentication: HTTP Basic Auth (username:password in header)
+    - TokenAuthentication: DRF's built-in token auth
+    - JWTAuthentication: JSON Web Tokens (stateless, scalable)
+
+    We use JWT because:
+    1. Stateless: No server-side session storage needed
+    2. Scalable: Works across multiple servers without session sync
+    3. Mobile-friendly: No cookies required
+    4. Contains user info in the token itself (after verification)
+
+    Query Parameters:
+    - include_hidden=true: Also return is_visible=False tags
     """
     serializer_class = TagSerializer
     permission_classes = [IsAuthenticated]
@@ -309,9 +378,14 @@ class UserTagList(generics.ListCreateAPIView):
 
     def get_queryset(self):
         """Return tags for authenticated user only."""
-        return UserTransactionTag.objects.filter(
-            user=self.request.user,
-        )
+        include_hidden = self.request.query_params.get('include_hidden', 'false').lower() == 'true'
+
+        queryset = UserTransactionTag.objects.filter(user=self.request.user)
+
+        if not include_hidden:
+            queryset = queryset.filter(is_visible=True)
+
+        return queryset
 
     def perform_create(self, serializer):
         """Set user automatically."""
@@ -340,24 +414,30 @@ class UserCategoryDetail(generics.RetrieveUpdateDestroyAPIView):
     """
     Retrieve, update, or delete a category.
 
-    GET /api/categories/{id}/ - Get category details
-    PUT /api/categories/{id}/ - Update category
-    DELETE /api/categories/{id}/ - Archive category (soft delete)
+    GET /api/wallets/categories/{id}/ - Get category details
+    PUT /api/wallets/categories/{id}/ - Update category (full replace)
+    PATCH /api/wallets/categories/{id}/ - Partial update
+    DELETE /api/wallets/categories/{id}/ - Archive category (soft delete)
     """
     serializer_class = CategorySerializer
     permission_classes = [IsAuthenticated]
     authentication_classes = [JWTAuthentication]
 
     def get_queryset(self):
-        """Return only user's categories."""
-        return UserTransactionCategory.objects.filter(user=self.request.user)
+        """Return only user's own categories."""
+        return TransactionCategory.objects.filter(user=self.request.user)
 
     def perform_destroy(self, instance):
         """
-        Soft delete: Archive instead of deleting.
+        DRF EDUCATIONAL NOTE - Soft Delete Pattern
+        ==========================================
+        Instead of actually deleting, we set is_archived=True.
 
-        This preserves historical data - transactions keep their category
-        reference, but category won't appear in dropdown for new transactions.
+        Benefits:
+        - Preserves historical data for reporting
+        - Transactions keep their category reference
+        - Can be "undeleted" if needed
+        - Audit trail maintained
         """
         instance.is_archived = True
         instance.save()

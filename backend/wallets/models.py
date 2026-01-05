@@ -32,31 +32,63 @@ class Wallet(models.Model):
         return f"{self.user.username}'s Wallet"
 
 
-class UserTransactionCategory(models.Model):
+class TransactionCategory(models.Model):
     """
-    User's transaction categories, shared across all their wallets.
+    Transaction categories for organizing transactions.
 
-    Examples:
-        - "Groceries" can be used in both PLN and EUR wallets
-        - "Salary" income category works for any wallet
+    DRF EDUCATIONAL NOTE - ForeignKey Relationships
+    ================================================
+    We use ForeignKey for the user relationship because:
+    1. One user can have MANY categories (one-to-many relationship)
+    2. Each category belongs to exactly ONE user
+    3. ForeignKey creates a database index for efficient queries
+    4. related_name='transaction_categories' allows reverse lookup:
+       user.transaction_categories.all()
+
+    Default Categories
+    ==================
+    When a user is created, a set of default categories is automatically
+    copied to their account via a Django signal (see signals.py).
+    Users own all their categories and can freely edit, delete, or hide them.
 
     Attributes:
         name: Category name (unique per user)
         user: Owner of this category
-        icon: Optional icon identifier for UI
+        icon: Lucide icon name for UI (e.g., 'shopping-cart')
         color: Hex color for UI display
+        is_visible: Toggle to hide from dropdowns (but still shows on existing transactions)
         is_archived: Soft delete - hide without losing historical data
     """
     id = models.UUIDField(primary_key=True, default=uuid.uuid4, editable=False)
     name = models.CharField(max_length=100)
-    user = models.ForeignKey(User, related_name='transaction_categories', on_delete=models.CASCADE)
-    icon = models.CharField(max_length=50, blank=True)
-    color = models.CharField(max_length=7, default='#6B7280') 
+
+    # DRF EDUCATIONAL NOTE - Required ForeignKey
+    # Every category belongs to a user. Default categories are copied
+    # to each user on signup, so they own their categories fully.
+    # on_delete=CASCADE means: when user is deleted, delete their categories too
+    user = models.ForeignKey(
+        User,
+        related_name='transaction_categories',
+        on_delete=models.CASCADE,
+    )
+
+    icon = models.CharField(max_length=50, blank=True)  # Lucide icon name, e.g., 'shopping-cart'
+    color = models.CharField(max_length=7, default='#6B7280')  # Hex color
+
+    # Visibility toggle - hidden categories still show on existing transactions
+    # but won't appear in dropdowns when creating/editing transactions
+    is_visible = models.BooleanField(
+        default=True,
+        help_text="Hidden categories won't appear in dropdowns but remain on transactions"
+    )
+
     is_archived = models.BooleanField(default=False)
     created_at = models.DateTimeField(auto_now_add=True)
     updated_at = models.DateTimeField(auto_now=True)
 
     class Meta:
+        # DRF EDUCATIONAL NOTE - unique_together constraint
+        # This ensures a user can't have duplicate category names.
         unique_together = [['name', 'user']]
         verbose_name_plural = 'categories'
         ordering = ['name']
@@ -68,13 +100,42 @@ class UserTransactionTag(models.Model):
     """
     Tags for transactions to allow flexible labeling.
 
+    DRF EDUCATIONAL NOTE - ManyToMany vs ForeignKey
+    ===============================================
+    Tags use a ManyToMany relationship in Transaction because:
+    - One transaction can have MANY tags
+    - One tag can be used on MANY transactions
+
+    Compare to Category which uses ForeignKey because:
+    - One transaction has exactly ONE category (or none)
+
+    The ManyToMany relationship creates a junction table automatically:
+    wallets_transaction_tags containing (transaction_id, tag_id) pairs.
+    Django handles this table creation and querying transparently.
+
     Attributes:
         name: Tag name (unique per user)
         user: Owner of this tag
+        icon: Lucide icon name for UI (e.g., 'tag')
+        color: Hex color for UI display
+        is_visible: Toggle to hide from dropdowns
     """
     id = models.UUIDField(primary_key=True, default=uuid.uuid4, editable=False)
     name = models.CharField(max_length=50)
     user = models.ForeignKey(User, related_name='transaction_tags', on_delete=models.CASCADE)
+
+    # Icon and color for visual consistency with categories
+    icon = models.CharField(max_length=50, blank=True)  # Lucide icon name, e.g., 'tag'
+    color = models.CharField(max_length=7, default='#3B82F6')  # Default blue
+
+    # Visibility toggle - hidden tags still show on existing transactions
+    is_visible = models.BooleanField(
+        default=True,
+        help_text="Hidden tags won't appear in dropdowns but remain on transactions"
+    )
+
+    created_at = models.DateTimeField(auto_now_add=True)
+    updated_at = models.DateTimeField(auto_now=True)
 
     class Meta:
         unique_together = [['name', 'user']]
@@ -100,7 +161,7 @@ class Transaction(models.Model):
         date: Auto-set to creation time. Supports filtering by month/year for reporting
         wallet: ForeignKey to the associated wallet
         created_by: User who created this transaction
-        category: Optional ForeignKey to UserTransactionCategory
+        category: Optional ForeignKey to TransactionCategory
         tags: ManyToMany relationship to UserTransactionTag
     """
     id = models.UUIDField(primary_key=True, default=uuid.uuid4, editable=False)
@@ -116,7 +177,7 @@ class Transaction(models.Model):
     wallet = models.ForeignKey(Wallet, related_name='transactions', on_delete=models.CASCADE)
     created_by = models.ForeignKey(User, related_name='created_transactions', on_delete=models.CASCADE)
     category = models.ForeignKey(
-        'UserTransactionCategory', 
+        'TransactionCategory',
         related_name='transactions',
         on_delete=models.SET_NULL,
         null=True,

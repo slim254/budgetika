@@ -1,32 +1,37 @@
 # App general todos
+PRIORITY / COMPLEXITY; Scale Lowest 1-5 Highest
 
 ## features / improvements
 
-### transaction category
+### transaction category 5/3 - COMPLETED
 
-[ ] predefined categories (public) - not sure if allow edits and what happens to it after edit - for sure user specific after edit
+[x] predefined categories (public) - copy-on-edit creates user-specific copy
 
-[ ] toggle categories - checked/toggled ones are visible on the ui when adding/editing transaction
+[x] toggle categories - visibility toggle hides from dropdowns but shows on existing transactions
 
-[ ] category colors and icons - user customizable
+[x] category colors and icons - user customizable with Lucide icons
 
-### tags
+### tags 5/2 - COMPLETED
 
-[ ] tags colors and icons - user customizable
+[x] tags colors and icons - user customizable with Lucide icons
 
-### recurring transactions
+[x] tags visibility toggle
+
+### recurring transactions 4/4
 
 [ ] add/edit transaction modal allows to toggle transaction as recurring - set occurence eg. each month / year / day / week and also stop date
 
 [ ] add/edit occuring trasnactions in settings
 
-### dashboards
+### dashboards 4/3
 
 [ ] user main dashboard including all wallets with basic metrics
 
 [ ] wallet dasboard with basic metrics
 
-### csv import - let user import transactions from other sources
+[ ] ensure balance is shown correclty for all wallets and per wallet
+
+### csv import - let user import transactions from other sources 3/3
 
 [ ] prepare ui for uploading csv
 
@@ -34,16 +39,18 @@
 
 [ ] PLACEHOLDER - in future bank's specific csv parsing
 
-### Budgeting: Set a monthly limit for specific categories (e.g., "$400 for Groceries") and show a progress bar.
+### Budgeting: Set a monthly limit for specific categories (e.g., "$400 for Groceries") and show a progress bar. 2/3
 
 [ ] prepare ui and backend
 
-### Search and Filters: Let users find that one specific transaction from three months ago.
+### Search and Filters: Let users find that one specific transaction from three months ago. 4/3
 
 [ ] prepare ui and backend
 [ ] pagination
 
-### CSV export as a backup
+### CSV export as a backup 3/2
+
+[ ] export transactions to CSV
 
 
 ## bugs

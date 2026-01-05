@@ -52,7 +52,7 @@ function LoginForm() {
                     </CardDescription>
                 </CardHeader>
                 <CardContent>
-                    <form onSubmit={handleSubmit} className="space-y-4">
+                    <form onSubmit={handleSubmit} className="space-y-4" suppressHydrationWarning>
                         <div className="space-y-2">
                             <Label htmlFor="username">Username</Label>
                             <Input

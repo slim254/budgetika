@@ -34,8 +34,10 @@ import {
   CommandItem,
   CommandList,
 } from "@/components/ui/command";
-import { Check, ChevronsUpDown, Plus } from "lucide-react";
+import { Check, ChevronsUpDown, Plus, EyeOff } from "lucide-react";
 import { cn } from "@/lib/utils";
+import { DynamicIcon } from "@/components/IconPicker";
+import { useMemo } from "react";
 
 interface TransactionDialogProps {
   open: boolean;
@@ -70,6 +72,7 @@ export function TransactionDialog({
 }: TransactionDialogProps) {
   const [isLoading, setIsLoading] = useState<boolean>(false);
   const [error, setError] = useState<string>("");
+  const [fieldErrors, setFieldErrors] = useState<Record<string, string>>({});
   // Track type separately since we need to apply it to amount sign
   const [transactionType, setTransactionType] = useState<"income" | "expense">("expense");
   const [formData, setFormData] = useState<TransactionFormData>({
@@ -101,8 +104,24 @@ export function TransactionDialog({
   const [isCreatingTag, setIsCreatingTag] = useState(false);
   const [createTagError, setCreateTagError] = useState("");
 
-  // Filter categories based on search
-  const filteredCategories = categories.filter((cat) =>
+  // Filter to only show visible categories in dropdown
+  // BUT still show the transaction's current category even if hidden
+  const visibleCategories = useMemo(() => {
+    const visible = categories.filter(cat => cat.is_visible);
+
+    // If editing and current category is hidden, include it
+    if (transaction?.category && !transaction.category.is_visible) {
+      const currentCategory = categories.find(c => c.id === transaction.category?.id);
+      if (currentCategory && !visible.find(c => c.id === currentCategory.id)) {
+        return [currentCategory, ...visible];
+      }
+    }
+
+    return visible;
+  }, [categories, transaction]);
+
+  // Filter categories based on search (from visible categories)
+  const filteredCategories = visibleCategories.filter((cat) =>
     cat.name.toLowerCase().includes(categorySearch.toLowerCase())
   );
 
@@ -117,8 +136,24 @@ export function TransactionDialog({
   // Get selected category name for display
   const selectedCategory = categories.find((cat) => cat.id === formData.category);
 
-  // Filter tags based on search
-  const filteredTags = tags.filter((tag) =>
+  // Filter to only show visible tags in dropdown
+  // BUT still show currently selected hidden tags
+  const visibleTags = useMemo(() => {
+    const visible = tags.filter(tag => tag.is_visible);
+
+    // Include currently selected hidden tags
+    if (formData.tag_ids.length > 0) {
+      const hiddenSelectedTags = tags.filter(
+        t => !t.is_visible && formData.tag_ids.includes(t.id)
+      );
+      return [...hiddenSelectedTags, ...visible];
+    }
+
+    return visible;
+  }, [tags, formData.tag_ids]);
+
+  // Filter tags based on search (from visible tags)
+  const filteredTags = visibleTags.filter((tag) =>
     tag.name.toLowerCase().includes(tagSearch.toLowerCase())
   );
 
@@ -230,15 +265,50 @@ export function TransactionDialog({
         });
       }
       setError("");
+      setFieldErrors({});
       setCategorySearch("");
       setTagSearch("");
     }
   }, [transaction, currency, open]);
 
+  function validateForm(): boolean {
+    const errors: Record<string, string> = {};
+
+    if (!formData.amount || formData.amount <= 0) {
+      errors.amount = "Amount is required and must be greater than 0";
+    }
+
+    if (!formData.date) {
+      errors.date = "Date is required";
+    }
+
+    if (!formData.note.trim()) {
+      errors.note = "Note is required";
+    }
+
+    setFieldErrors(errors);
+    return Object.keys(errors).length === 0;
+  }
+
+  function clearFieldError(field: string) {
+    if (fieldErrors[field]) {
+      setFieldErrors(prev => {
+        const updated = { ...prev };
+        delete updated[field];
+        return updated;
+      });
+    }
+  }
+
   async function handleSubmit(e: FormEvent<HTMLFormElement>) {
     e.preventDefault();
-    setIsLoading(true);
     setError("");
+
+    if (!validateForm()) {
+      return;
+    }
+
+    setIsLoading(true);
 
     try {
       // Apply sign based on transaction type
@@ -328,12 +398,16 @@ export function TransactionDialog({
               min="0"
               placeholder="0.00"
               value={formData.amount || ""}
-              onChange={(e) =>
-                setFormData({ ...formData, amount: parseFloat(e.target.value) || 0 })
-              }
-              required
+              onChange={(e) => {
+                setFormData({ ...formData, amount: parseFloat(e.target.value) || 0 });
+                clearFieldError("amount");
+              }}
               disabled={isLoading}
+              className={fieldErrors.amount ? "border-red-500" : ""}
             />
+            {fieldErrors.amount && (
+              <p className="text-sm text-red-600">{fieldErrors.amount}</p>
+            )}
           </div>
 
           <div className="space-y-2">
@@ -343,10 +417,16 @@ export function TransactionDialog({
               name="date"
               type="date"
               value={formData.date}
-              onChange={(e) => setFormData({ ...formData, date: e.target.value })}
-              required
+              onChange={(e) => {
+                setFormData({ ...formData, date: e.target.value });
+                clearFieldError("date");
+              }}
               disabled={isLoading}
+              className={fieldErrors.date ? "border-red-500" : ""}
             />
+            {fieldErrors.date && (
+              <p className="text-sm text-red-600">{fieldErrors.date}</p>
+            )}
           </div>
 
           <div className="space-y-2">
@@ -360,7 +440,23 @@ export function TransactionDialog({
                   className="w-full justify-between font-normal"
                   disabled={isLoading}
                 >
-                  {selectedCategory ? selectedCategory.name : "Select category..."}
+                  {selectedCategory ? (
+                    <span className="flex items-center gap-2">
+                      <div
+                        className="w-5 h-5 rounded flex items-center justify-center"
+                        style={{ backgroundColor: selectedCategory.color + "20" }}
+                      >
+                        <DynamicIcon
+                          name={selectedCategory.icon || "circle"}
+                          className="h-3 w-3"
+                          style={{ color: selectedCategory.color }}
+                        />
+                      </div>
+                      {selectedCategory.name}
+                    </span>
+                  ) : (
+                    "Select category..."
+                  )}
                   <ChevronsUpDown className="ml-2 h-4 w-4 shrink-0 opacity-50" />
                 </Button>
               </PopoverTrigger>
@@ -409,7 +505,20 @@ export function TransactionDialog({
                               formData.category === cat.id ? "opacity-100" : "opacity-0"
                             )}
                           />
+                          <div
+                            className="w-5 h-5 rounded mr-2 flex items-center justify-center"
+                            style={{ backgroundColor: cat.color + "20" }}
+                          >
+                            <DynamicIcon
+                              name={cat.icon || "circle"}
+                              className="h-3 w-3"
+                              style={{ color: cat.color }}
+                            />
+                          </div>
                           {cat.name}
+                          {!cat.is_visible && (
+                            <EyeOff className="h-3 w-3 ml-auto text-muted-foreground" />
+                          )}
                         </CommandItem>
                       ))}
                       {showCreateOption && (
@@ -439,9 +548,27 @@ export function TransactionDialog({
                   className="w-full justify-between font-normal"
                   disabled={isLoading}
                 >
-                  {selectedTags.length > 0
-                    ? selectedTags.map(t => t.name).join(", ")
-                    : "Select tags..."}
+                  {selectedTags.length > 0 ? (
+                    <span className="flex items-center gap-1 flex-wrap">
+                      {selectedTags.slice(0, 3).map(t => (
+                        <span
+                          key={t.id}
+                          className="inline-flex items-center gap-1 px-1.5 py-0.5 rounded text-xs"
+                          style={{ backgroundColor: t.color + "20", color: t.color }}
+                        >
+                          <DynamicIcon name={t.icon || "tag"} className="h-3 w-3" />
+                          {t.name}
+                        </span>
+                      ))}
+                      {selectedTags.length > 3 && (
+                        <span className="text-xs text-muted-foreground">
+                          +{selectedTags.length - 3} more
+                        </span>
+                      )}
+                    </span>
+                  ) : (
+                    "Select tags..."
+                  )}
                   <ChevronsUpDown className="ml-2 h-4 w-4 shrink-0 opacity-50" />
                 </Button>
               </PopoverTrigger>
@@ -469,7 +596,20 @@ export function TransactionDialog({
                               formData.tag_ids.includes(tag.id) ? "opacity-100" : "opacity-0"
                             )}
                           />
+                          <div
+                            className="w-5 h-5 rounded mr-2 flex items-center justify-center"
+                            style={{ backgroundColor: tag.color + "20" }}
+                          >
+                            <DynamicIcon
+                              name={tag.icon || "tag"}
+                              className="h-3 w-3"
+                              style={{ color: tag.color }}
+                            />
+                          </div>
                           {tag.name}
+                          {!tag.is_visible && (
+                            <EyeOff className="h-3 w-3 ml-auto text-muted-foreground" />
+                          )}
                         </CommandItem>
                       ))}
                       {showCreateTagOption && (
@@ -491,13 +631,15 @@ export function TransactionDialog({
                 {selectedTags.map((tag) => (
                   <span
                     key={tag.id}
-                    className="inline-flex items-center gap-1 px-2 py-0.5 rounded text-xs font-medium bg-blue-100 text-blue-800"
+                    className="inline-flex items-center gap-1 px-2 py-0.5 rounded text-xs font-medium"
+                    style={{ backgroundColor: tag.color + "20", color: tag.color }}
                   >
+                    <DynamicIcon name={tag.icon || "tag"} className="h-3 w-3" />
                     {tag.name}
                     <button
                       type="button"
                       onClick={() => handleToggleTag(tag.id)}
-                      className="hover:text-blue-600"
+                      className="hover:opacity-70"
                     >
                       ×
                     </button>
@@ -515,10 +657,16 @@ export function TransactionDialog({
               type="text"
               placeholder="e.g., Grocery shopping"
               value={formData.note}
-              onChange={(e) => setFormData({ ...formData, note: e.target.value })}
-              required
+              onChange={(e) => {
+                setFormData({ ...formData, note: e.target.value });
+                clearFieldError("note");
+              }}
               disabled={isLoading}
+              className={fieldErrors.note ? "border-red-500" : ""}
             />
+            {fieldErrors.note && (
+              <p className="text-sm text-red-600">{fieldErrors.note}</p>
+            )}
           </div>
 
           {error && (

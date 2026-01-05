@@ -6,6 +6,7 @@ import { Button } from "@/components/ui/button";
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/components/ui/card";
 import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from "@/components/ui/table";
 import { ArrowLeft, Plus, Edit, Trash2, TrendingUp, TrendingDown } from "lucide-react";
+import { DynamicIcon } from "@/components/IconPicker";
 import { UserMenu } from "@/components/UserMenu";
 import { useParams, useRouter, useSearchParams } from "next/navigation";
 import { useEffect, useState } from "react";
@@ -71,10 +72,19 @@ export default function WalletPage() {
 
   async function loadData() {
     setIsLoading(true);
-    await Promise.all([fetchWallet(), fetchTransactions(), fetchCategories(), fetchTags()]);
+    await Promise.all([fetchWallet(), fetchTransactions()]);
     setIsLoading(false);
   }
 
+  // Fetch categories and tags once on mount (they don't change with month/year)
+  useEffect(() => {
+    if (params.id) {
+      fetchCategories();
+      fetchTags();
+    }
+  }, [params.id]);
+
+  // Fetch wallet and transactions when month/year changes
   useEffect(() => {
     if (params.id) {
       loadData();
@@ -266,15 +276,38 @@ export default function WalletPage() {
                             {new Date(transaction.date).toLocaleDateString()}
                           </TableCell>
                           <TableCell>{transaction.note}</TableCell>
-                          <TableCell>{transaction.category?.name || 'Uncategorized'}</TableCell>
+                          <TableCell>
+                            {transaction.category ? (
+                              <div className="flex items-center gap-2">
+                                <div
+                                  className="w-6 h-6 rounded flex items-center justify-center"
+                                  style={{ backgroundColor: transaction.category.color + "20" }}
+                                >
+                                  <DynamicIcon
+                                    name={transaction.category.icon || "circle"}
+                                    className="h-3 w-3"
+                                    style={{ color: transaction.category.color }}
+                                  />
+                                </div>
+                                <span>{transaction.category.name}</span>
+                              </div>
+                            ) : (
+                              <span className="text-gray-400">Uncategorized</span>
+                            )}
+                          </TableCell>
                           <TableCell>
                             {transaction.tags && transaction.tags.length > 0 ? (
                               <div className="flex flex-wrap gap-1">
                                 {transaction.tags.map((tag) => (
                                   <span
                                     key={tag.id}
-                                    className="inline-flex items-center px-2 py-0.5 rounded text-xs font-medium bg-blue-100 text-blue-800"
+                                    className="inline-flex items-center gap-1 px-2 py-0.5 rounded text-xs font-medium"
+                                    style={{
+                                      backgroundColor: tag.color + "20",
+                                      color: tag.color
+                                    }}
                                   >
+                                    <DynamicIcon name={tag.icon || "tag"} className="h-3 w-3" />
                                     {tag.name}
                                   </span>
                                 ))}

@@ -17,8 +17,9 @@ export interface Wallet {
 export interface Category {
     id: string;
     name: string;
-    icon: string;
-    color: string;
+    icon: string;           // Lucide icon name, e.g., 'shopping-cart'
+    color: string;          // Hex color, e.g., '#F97316'
+    is_visible: boolean;    // Visibility toggle
     is_archived: boolean;
     transaction_count: number;
 }
@@ -26,6 +27,9 @@ export interface Category {
 export interface Tag {
     id: string;
     name: string;
+    icon: string;           // Lucide icon name
+    color: string;          // Hex color
+    is_visible: boolean;    // Visibility toggle
     transaction_count: number;
 }
 
@@ -59,4 +63,12 @@ export interface CategoryFormData {
     name: string;
     icon?: string;
     color?: string;
+    is_visible?: boolean;
+}
+
+export interface TagFormData {
+    name: string;
+    icon?: string;
+    color?: string;
+    is_visible?: boolean;
 }
