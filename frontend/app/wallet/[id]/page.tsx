@@ -14,6 +14,7 @@ import { Wallet, Transaction, Category, Tag } from "@/models/wallets";
 import { TransactionDialog } from "@/components/TransactionDialog";
 import { CSVImportDialog } from "@/components/CSVImportDialog";
 import MonthSelector from "@/components/MonthSelector";
+import { formatCurrency } from "@/lib/currency";
 
 export default function WalletPage() {
   const [wallet, setWallet] = useState<Wallet | null>(null);
@@ -199,7 +200,7 @@ export default function WalletPage() {
               <div className="text-right">
                 <p className="text-sm text-gray-500">Current Balance</p>
                 <p className={`text-3xl font-bold ${Number(wallet.balance) >= 0 ? 'text-green-600' : 'text-red-600'}`}>
-                  ${Number(wallet.balance).toFixed(2)}
+                  {formatCurrency(wallet.balance, wallet.currency)}
                 </p>
               </div>
             </div>
@@ -213,7 +214,7 @@ export default function WalletPage() {
                 <CardTitle className="text-sm font-medium">Initial Value</CardTitle>
               </CardHeader>
               <CardContent>
-                <div className="text-2xl font-bold">${Number(wallet.initial_value).toFixed(2)}</div>
+                <div className="text-2xl font-bold">{formatCurrency(wallet.initial_value, wallet.currency)}</div>
                 <p className="text-xs text-muted-foreground">Starting balance</p>
               </CardContent>
             </Card>
@@ -224,7 +225,7 @@ export default function WalletPage() {
                 <TrendingUp className="h-4 w-4 text-green-600" />
               </CardHeader>
               <CardContent>
-                <div className="text-2xl font-bold text-green-600">${incomeTotal.toFixed(2)}</div>
+                <div className="text-2xl font-bold text-green-600">{formatCurrency(incomeTotal, wallet.currency)}</div>
                 <p className="text-xs text-muted-foreground">
                   {transactions.filter(t => Number(t.amount) > 0).length} transactions
                 </p>
@@ -237,7 +238,7 @@ export default function WalletPage() {
                 <TrendingDown className="h-4 w-4 text-red-600" />
               </CardHeader>
               <CardContent>
-                <div className="text-2xl font-bold text-red-600">${expenseTotal.toFixed(2)}</div>
+                <div className="text-2xl font-bold text-red-600">{formatCurrency(expenseTotal, wallet.currency)}</div>
                 <p className="text-xs text-muted-foreground">
                   {transactions.filter(t => Number(t.amount) < 0).length} transactions
                 </p>
@@ -355,7 +356,7 @@ export default function WalletPage() {
                           <TableCell className={`text-right font-semibold ${
                             isIncome ? 'text-green-600' : 'text-red-600'
                           }`}>
-                            {isIncome ? '+' : ''}${Number(transaction.amount).toFixed(2)}
+                            {isIncome ? '+' : ''}{formatCurrency(transaction.amount, wallet.currency)}
                           </TableCell>
                           <TableCell className="text-right">
                             <div className="flex justify-end gap-2">

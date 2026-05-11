@@ -2,19 +2,22 @@
 
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/components/ui/card";
 import { DynamicIcon } from "@/components/IconPicker";
-import { CategorySpending } from "@/models/wallets";
+import { CategorySpending, Currency } from "@/models/wallets";
 import { PieChart as PieChartIcon } from "lucide-react";
+import { formatCurrency } from "@/lib/currency";
 
 interface CategoryBreakdownProps {
   data: CategorySpending[];
   title?: string;
   description?: string;
+  currency?: Currency;
 }
 
 export function CategoryBreakdown({
   data,
   title = "Spending by Category",
   description = "Current month",
+  currency,
 }: CategoryBreakdownProps) {
   return (
     <Card>
@@ -52,7 +55,7 @@ export function CategoryBreakdown({
                       </span>
                     </div>
                     <div className="text-right shrink-0">
-                      <div className="text-sm font-semibold text-red-600">${amount.toFixed(2)}</div>
+                      <div className="text-sm font-semibold text-red-600">{formatCurrency(amount, currency)}</div>
                       <div className="text-xs text-gray-500">{pct.toFixed(1)}%</div>
                     </div>
                   </div>

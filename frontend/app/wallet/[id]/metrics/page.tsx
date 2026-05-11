@@ -12,6 +12,7 @@ import { useParams, useRouter } from "next/navigation";
 import { useEffect, useState } from "react";
 import { WalletMetricsResponse } from "@/models/wallets";
 import { CategoryBreakdown } from "@/components/CategoryBreakdown";
+import { formatCurrency } from "@/lib/currency";
 
 interface MetricStatProps {
   label: string;
@@ -100,7 +101,7 @@ export default function WalletMetricsPage() {
               <div className="text-right">
                 <p className="text-sm text-gray-500">Current Balance</p>
                 <p className={`text-3xl font-bold ${balance >= 0 ? "text-green-600" : "text-red-600"}`}>
-                  ${balance.toFixed(2)}
+                  {formatCurrency(balance, data.currency)}
                 </p>
               </div>
             </div>
@@ -113,17 +114,17 @@ export default function WalletMetricsPage() {
             <div className="grid gap-4 md:grid-cols-3">
               <MetricStat
                 label="Income"
-                value={`$${Number(m.income_this_month).toFixed(2)}`}
+                value={formatCurrency(m.income_this_month, data.currency)}
                 tone="positive"
               />
               <MetricStat
                 label="Expenses"
-                value={`$${Number(m.expenses_this_month).toFixed(2)}`}
+                value={formatCurrency(m.expenses_this_month, data.currency)}
                 tone="negative"
               />
               <MetricStat
                 label="Net"
-                value={`${Number(m.net_this_month) >= 0 ? "+" : ""}$${Number(m.net_this_month).toFixed(2)}`}
+                value={`${Number(m.net_this_month) >= 0 ? "+" : ""}${formatCurrency(m.net_this_month, data.currency)}`}
                 tone={Number(m.net_this_month) >= 0 ? "positive" : "negative"}
               />
             </div>
@@ -139,16 +140,16 @@ export default function WalletMetricsPage() {
               />
               <MetricStat
                 label="Average Transaction"
-                value={`$${Number(m.average_transaction).toFixed(2)}`}
+                value={formatCurrency(m.average_transaction, data.currency)}
               />
               <MetricStat
                 label="Largest Income"
-                value={`$${Number(m.largest_income).toFixed(2)}`}
+                value={formatCurrency(m.largest_income, data.currency)}
                 tone="positive"
               />
               <MetricStat
                 label="Largest Expense"
-                value={`$${Number(m.largest_expense).toFixed(2)}`}
+                value={formatCurrency(m.largest_expense, data.currency)}
                 tone="negative"
               />
             </div>
@@ -158,6 +159,7 @@ export default function WalletMetricsPage() {
             data={data.category_breakdown}
             title="Spending by Category"
             description="All-time"
+            currency={data.currency}
           />
 
           <Card>
@@ -218,7 +220,7 @@ export default function WalletMetricsPage() {
                               ) : (
                                 <TrendingDown className="h-3.5 w-3.5" />
                               )}
-                              {isIncome ? "+" : ""}${Number(t.amount).toFixed(2)}
+                              {isIncome ? "+" : ""}{formatCurrency(t.amount, data.currency)}
                             </span>
                           </TableCell>
                         </TableRow>

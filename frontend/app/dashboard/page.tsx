@@ -13,6 +13,7 @@ import { UserMenu } from "@/components/UserMenu";
 import { MetricsSummaryCards } from "@/components/MetricsSummaryCards";
 import { CategoryBreakdown } from "@/components/CategoryBreakdown";
 import { MonthlyTrendChart } from "@/components/MonthlyTrendChart";
+import { formatCurrency } from "@/lib/currency";
 
 export default function DashboardPage() {
     const { session } = useAuthContext();
@@ -139,12 +140,12 @@ export default function DashboardPage() {
                                                 <div className="flex justify-between">
                                                     <span className="text-sm text-gray-500">Balance:</span>
                                                     <span className={`text-sm font-semibold ${Number(wallet.balance) >= 0 ? 'text-green-600' : 'text-red-600'}`}>
-                                                        ${Number(wallet.balance).toFixed(2)}
+                                                        {formatCurrency(wallet.balance, wallet.currency)}
                                                     </span>
                                                 </div>
                                                 <div className="flex justify-between">
                                                     <span className="text-sm text-gray-500">Initial Value:</span>
-                                                    <span className="text-sm">${Number(wallet.initial_value).toFixed(2)}</span>
+                                                    <span className="text-sm">{formatCurrency(wallet.initial_value, wallet.currency)}</span>
                                                 </div>
                                             </div>
                                         </CardContent>

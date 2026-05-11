@@ -3,6 +3,7 @@
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { Wallet as WalletIcon, TrendingUp, TrendingDown, Scale } from "lucide-react";
 import { DashboardSummary } from "@/models/wallets";
+import { formatCurrency } from "@/lib/currency";
 
 interface MetricsSummaryCardsProps {
   summary: DashboardSummary;
@@ -24,7 +25,7 @@ export function MetricsSummaryCards({ summary, walletCount }: MetricsSummaryCard
         </CardHeader>
         <CardContent>
           <div className={`text-2xl font-bold ${totalBalance >= 0 ? "text-green-600" : "text-red-600"}`}>
-            ${totalBalance.toFixed(2)}
+            {formatCurrency(totalBalance)}
           </div>
           <p className="text-xs text-muted-foreground">
             Across {walletCount} wallet{walletCount !== 1 ? "s" : ""}
@@ -38,7 +39,7 @@ export function MetricsSummaryCards({ summary, walletCount }: MetricsSummaryCard
           <TrendingUp className="h-4 w-4 text-green-600" />
         </CardHeader>
         <CardContent>
-          <div className="text-2xl font-bold text-green-600">${income.toFixed(2)}</div>
+          <div className="text-2xl font-bold text-green-600">{formatCurrency(income)}</div>
         </CardContent>
       </Card>
 
@@ -48,7 +49,7 @@ export function MetricsSummaryCards({ summary, walletCount }: MetricsSummaryCard
           <TrendingDown className="h-4 w-4 text-red-600" />
         </CardHeader>
         <CardContent>
-          <div className="text-2xl font-bold text-red-600">${expenses.toFixed(2)}</div>
+          <div className="text-2xl font-bold text-red-600">{formatCurrency(expenses)}</div>
         </CardContent>
       </Card>
 
@@ -59,7 +60,7 @@ export function MetricsSummaryCards({ summary, walletCount }: MetricsSummaryCard
         </CardHeader>
         <CardContent>
           <div className={`text-2xl font-bold ${net >= 0 ? "text-green-600" : "text-red-600"}`}>
-            {net >= 0 ? "+" : ""}${net.toFixed(2)}
+            {net >= 0 ? "+" : ""}{formatCurrency(net)}
           </div>
           <p className="text-xs text-muted-foreground">Income − Expenses</p>
         </CardContent>
