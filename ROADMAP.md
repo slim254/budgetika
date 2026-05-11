@@ -9,6 +9,8 @@
 | Category & tag icons/colors/visibility | Lucide icons, hex colors, `is_visible` toggle, soft-delete on categories. |
 | Default categories on signup | Django signal copies defaults to each new user. |
 | CSV import | Two-step: parse → execute. Generic column mapper. |
+| Dashboards | Main dashboard (`UserDashboard` + `GET /api/dashboard/`) with summary cards, monthly trend chart, category breakdown, wallet list. Per-wallet metrics page (`WalletMetrics` + `GET /api/wallets/{id}/metrics/`) with lifetime stats, monthly breakdown, recent transactions. |
+| Currency symbol rendering | `formatCurrency` utility; wallet pages show correct symbol/code per currency (USD `$`, EUR `€`, GBP `£`, PLN `PLN`); dashboard aggregates show no symbol (mixed currencies). |
 
 ---
 
@@ -16,28 +18,18 @@
 
 | # | Feature | Priority | Complexity | Why this order |
 |---|---|---|---|---|
-| 1 | Dashboards | 4 | 3 | No model changes — pure reads on existing data. Immediate value. |
-| 2 | Recurring Transactions | 4 | 4 | Self-contained new model. Doesn't block anything else. |
-| 3 | Search & Filters + Pagination | 4 | 3 | Improves usability before data grows. |
-| 4 | Exchange Rates | 3 | 4 | Enables meaningful cross-currency dashboard totals and transactions in a foreign currency. |
-| 5 | Budgeting Limits | 2 | 3 | Needs dashboard aggregation patterns established first. |
-| 6 | CSV Export | 3 | 2 | Quick win, low risk, natural complement to CSV import. |
+| ~~1~~ | ~~Dashboards~~ | — | — | ✅ Done |
+| 1 | Recurring Transactions | 4 | 4 | Self-contained new model. Doesn't block anything else. |
+| 2 | Search & Filters + Pagination | 4 | 3 | Improves usability before data grows. |
+| 3 | Exchange Rates | 3 | 4 | Enables meaningful cross-currency dashboard totals and transactions in a foreign currency. |
+| 4 | Budgeting Limits | 2 | 3 | Needs dashboard aggregation patterns established first. |
+| 5 | CSV Export | 3 | 2 | Quick win, low risk, natural complement to CSV import. |
 
 ---
 
 ## Active Features
 
-### 1. Dashboards — Priority 4 · Complexity 3
-
-**What:** Aggregated financial metrics across all wallets (main dashboard) and per wallet (wallet metrics endpoint).
-
-**Why first:** No model changes needed — pure read endpoints using existing data. Gives immediate value and teaches ORM aggregations needed for budgeting limits later.
-
-See **`DASHBOARDS_PLAN.md`** for full spec.
-
----
-
-### 2. Recurring Transactions — Priority 4 · Complexity 4
+### 1. Recurring Transactions — Priority 4 · Complexity 4
 
 **What:** Templates that auto-generate transactions on a schedule (daily/weekly/monthly/etc). Processed by a management command run via cron.
 
@@ -47,7 +39,7 @@ See **`RECURRING_TRANSACTIONS_PLAN.md`** for full spec.
 
 ---
 
-### 3. Search & Filters + Pagination — Priority 4 · Complexity 3
+### 2. Search & Filters + Pagination — Priority 4 · Complexity 3
 
 **What:** Filter transactions by note/category/tag/date range/amount range. Paginate large lists.
 
@@ -60,7 +52,7 @@ See **`RECURRING_TRANSACTIONS_PLAN.md`** for full spec.
 
 ---
 
-### 4. Exchange Rates — Priority 3 · Complexity 4
+### 3. Exchange Rates — Priority 3 · Complexity 4
 
 **What:** Fetch and store historical exchange rates so that:
 1. The dashboard's "Total Balance" card can show a single meaningful sum across all wallets (converted to a chosen base currency).
@@ -94,7 +86,7 @@ See **`RECURRING_TRANSACTIONS_PLAN.md`** for full spec.
 
 ---
 
-### 5. Budgeting Limits — Priority 2 · Complexity 3
+### 4. Budgeting Limits — Priority 2 · Complexity 3
 
 **What:** Per-category monthly spending cap with a progress bar showing usage.
 
