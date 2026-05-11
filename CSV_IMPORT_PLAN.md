@@ -1,1410 +1,1532 @@
-# CSV Transaction Import Implementation Plan
+# CSV Transaction Import - Learning Guide
 
-## Overview
-Implement functionality to import transactions from CSV export files into the Django budgeting app. The CSV format includes: Date, Wallet, Type, Category name, Amount, Currency, Note, Labels, and Author fields.
+> Learn Django REST Framework by building a generic CSV importer
 
-## Missing Features Analysis
+This guide teaches DRF concepts through building a real feature. Each step explains **what**, **why**, and links to official docs.
 
-### 1. **Labels/Tags System** ⚠️ CRITICAL
-**Current State:** No label/tag support exists in the Transaction model
-**CSV Has:** Labels column with comma-separated values (e.g., "iCloud", "ZUS", "rower")
-**Required:**
-- New `TransactionLabel` model with many-to-many relationship to Transaction
-- User-scoped labels (each user has their own label namespace)
-- Support for parsing comma-separated labels from CSV
+---
 
-### 2. **Editable Transaction Dates** ⚠️ CRITICAL
-**Current State:** `Transaction.date` uses `auto_now_add=True` (read-only, auto-set on creation)
-**CSV Has:** Historical dates (e.g., "2024-11-12T19:27:47+00:00")
-**Required:**
-- Change field from `auto_now_add=True` to `default=timezone.now`
-- Allows importing transactions with their original historical dates
+## Table of Contents
 
-### 3. **File Upload Infrastructure** ⚠️ CRITICAL
-**Current State:** No file upload capability exists
-**Required:**
-- CSV upload API endpoint: `POST /api/wallets/{wallet_id}/import-transactions/`
-- File validation (size, extension, headers)
-- Multipart form data handling
-- MEDIA_ROOT/MEDIA_URL configuration in settings
+1. [Architecture Overview](#architecture-overview)
+2. [Step 1: Service Layer](#step-1-service-layer---business-logic)
+3. [Step 2: Serializers](#step-2-serializers---validation--transformation)
+4. [Step 3: Views](#step-3-views---http-handling)
+5. [Step 4: URL Routing](#step-4-url-routing)
+6. [Step 5: Testing](#step-5-testing)
 
-### 4. **Bulk Import Operations** ⚠️ CRITICAL
-**Current State:** Only single transaction creation supported
-**Required:**
-- CSV parsing logic (handle encoding, validate structure)
-- Bulk insert using `Transaction.objects.bulk_create()`
-- Atomic transactions (all-or-nothing imports)
-- Error collection and reporting
+---
 
-### 5. **Category Auto-Creation**
-**Current State:** Categories must be created manually before use
-**Required:**
-- Logic to detect missing categories during import
-- Auto-create `WalletCategory` entries as needed
-- Infer category type (income/expense) from transaction type
-- Track which categories were created during import
+## Architecture Overview
 
-### 6. **Duplicate Detection**
-**Current State:** No duplicate checking mechanism
-**Required:**
-- Detect duplicates by matching: date + amount + note
-- Skip duplicates option (user-configurable)
-- Report how many duplicates were skipped
+### The Feature We're Building
 
-### 7. **Import Validation & Error Reporting**
-**Current State:** No validation framework for batch operations
-**Required:**
-- Row-by-row validation with error collection
-- Currency validation (must match wallet currency)
-- Amount parsing (handle negative values, convert to positive + type)
-- Date parsing (ISO 8601 format with timezone)
-- Transaction type normalization (Income/Expense → income/expense)
-- Comprehensive error response with row numbers and field details
+A generic CSV importer where users:
+1. Select target wallet
+2. Upload any CSV
+3. Map CSV columns → app fields (amount, date, note, etc.)
+4. Optionally filter rows (e.g., "only where Wallet = 'Main'")
+5. Import transactions
 
-### 8. **Security Features**
-**Current State:** Basic JWT authentication exists, but no file upload security
-**Required:**
-- File size limits (max 5MB)
-- File type validation (only .csv)
-- CSV header validation
-- Max row limit (e.g., 10,000 transactions)
-- User wallet ownership verification
+### Why Generic Instead of Hardcoded?
 
-## Implementation Approach
-
-### Data Model Changes
-
-#### 1. New TransactionLabel Model
+**Bad approach** - Hardcoded Spendee parser:
 ```python
-class TransactionLabel(models.Model):
-    id = models.UUIDField(primary_key=True, default=uuid.uuid4, editable=False)
-    name = models.CharField(max_length=50)
-    created_by = models.ForeignKey(User, on_delete=models.CASCADE, related_name='created_labels')
-    created_at = models.DateTimeField(auto_now_add=True)
-
-    class Meta:
-        unique_together = [['name', 'created_by']]  # User-scoped labels
-        ordering = ['name']
+# ❌ Fragile - breaks if Spendee changes format
+REQUIRED_COLUMNS = ['Date', 'Wallet', 'Type', 'Category name', 'Amount']
 ```
 
-#### 2. Modified Transaction Model
-- Change `date` field: `auto_now_add=True` → `default=timezone.now`
-- Add `labels` field: `ManyToManyField(TransactionLabel, blank=True)`
-- Add database index for duplicate detection: `Index(fields=['wallet', 'date', 'amount', 'note'])`
-
-### API Endpoint Design
-
-**Endpoint:** `POST /api/wallets/{wallet_id}/import-transactions/`
-**Authentication:** JWT (IsAuthenticated)
-**Content-Type:** multipart/form-data
-
-**Request:**
-```
-file: <CSV file>
-skip_duplicates: true/false (default: true)
-dry_run: true/false (default: false)
-```
-
-**Response (Success):**
-```json
-{
-  "status": "success",
-  "summary": {
-    "total_rows": 150,
-    "imported": 145,
-    "skipped_duplicates": 5,
-    "categories_created": 3,
-    "labels_created": 8,
-    "failed": 0
-  },
-  "created_categories": ["Groceries", "Transport", "Utilities"],
-  "created_labels": ["urgent", "recurring", "tax-deductible"],
-  "skipped_transactions": [],
-  "errors": []
-}
-```
-
-**Response (Error):**
-```json
-{
-  "status": "error",
-  "summary": {
-    "total_rows": 150,
-    "valid": 140,
-    "failed": 10
-  },
-  "errors": [
-    {
-      "row": 5,
-      "field": "amount",
-      "message": "Invalid decimal format",
-      "data": {"amount": "invalid"}
-    }
-  ]
-}
-```
-
-### CSV Import Logic Flow
-
-1. **File Validation**
-   - Check file size (< 5MB)
-   - Validate extension (.csv only)
-   - Verify CSV headers match expected format
-   - Check row count (< 10,000 rows)
-
-2. **CSV Parsing**
-   - Use `csv.DictReader` for row-by-row processing
-   - Handle encoding issues (UTF-8, UTF-8-BOM)
-   - Parse all rows into structured data
-
-3. **Row Processing (for each transaction)**
-   - Parse date: ISO 8601 → datetime object
-   - Normalize type: "Income"/"Expense" → "income"/"expense"
-   - Parse amount: Take absolute value (CSV has negative for expenses)
-   - Validate currency: Must match wallet currency
-   - Get/create category: Query or auto-create WalletCategory
-   - Parse labels: Split comma-separated string
-   - Get/create labels: Query or auto-create TransactionLabel
-   - Check duplicate: Query for existing transaction (date + amount + note)
-   - Collect valid transactions or errors
-
-4. **Bulk Import**
-   - Use `transaction.atomic()` for database atomicity
-   - `Transaction.objects.bulk_create()` for efficiency
-   - Create M2M relationships for labels
-   - Rollback on any database error
-
-5. **Return Results**
-   - Summary stats (imported, skipped, failed)
-   - List of created categories and labels
-   - Detailed error list with row numbers
-
-### CSV Field Mapping
-
-| CSV Column | Transaction Field | Notes |
-|------------|------------------|-------|
-| Date | date | Parse ISO 8601 format, convert to timezone-aware datetime |
-| Type | transaction_type | Normalize: "Income" → "income", "Expense" → "expense" |
-| Category name | category (FK) | Get or auto-create WalletCategory |
-| Amount | amount | Use absolute value (ignore sign from CSV) |
-| Currency | currency | Validate: must match wallet.currency |
-| Note | note | Use as-is (or empty string if blank) |
-| Labels | labels (M2M) | Parse comma-separated, get or create each label |
-| Wallet | (ignored) | Use wallet_id from URL path |
-| Author | (ignored) | Always use request.user as created_by |
-
-### Security Considerations
-
-1. **File Upload Security**
-   - Enforce max file size (5MB) before processing
-   - Validate file extension and MIME type
-   - Don't persist uploaded files (process in-memory)
-   - Sanitize all input fields
-
-2. **User Isolation**
-   - Verify wallet ownership: `get_object_or_404(Wallet, id=wallet_id, user=request.user)`
-   - All created categories belong to user's wallet
-   - All created labels scoped to user
-   - All imported transactions use `request.user` as created_by
-
-3. **Input Validation**
-   - Limit max rows to prevent DoS
-   - Validate currency against allowed choices
-   - Check decimal precision for amounts
-   - Validate date format
-
-## Critical Files to Modify
-
-### Backend Files
-
-1. **`wallets/models.py`**
-   - Add `TransactionLabel` model (new)
-   - Modify `Transaction.date` field (remove `auto_now_add`)
-   - Add `Transaction.labels` M2M field
-   - Add database index for duplicate detection
-
-2. **`wallets/migrations/0002_add_labels_and_editable_dates.py`** (NEW)
-   - Create TransactionLabel table
-   - Alter Transaction.date field
-   - Add Transaction.labels M2M relationship
-   - Add index for (wallet, date, amount, note)
-
-3. **`wallets/services.py`** (NEW)
-   - Create `CSVTransactionImporter` class
-   - Implement all import logic and validation
-   - ~300 lines of business logic
-
-4. **`wallets/serializers.py`**
-   - Add `TransactionLabelSerializer` (new)
-   - Add `CSVImportSerializer` for request validation (new)
-   - Update `TransactionSerializer` to include labels field
-
-5. **`wallets/views.py`**
-   - Add `WalletTransactionImportView` (new)
-   - Handle file upload, orchestrate import process
-   - Return formatted results
-
-6. **`wallets/urls.py`**
-   - Add route: `path('<uuid:wallet_id>/import-transactions/', ...)`
-
-7. **`config/settings.py`**
-   - Add `MEDIA_ROOT` and `MEDIA_URL`
-   - Add CSV import configuration constants:
-     - `CSV_IMPORT_MAX_FILE_SIZE = 5 * 1024 * 1024`
-     - `CSV_IMPORT_MAX_ROWS = 10000`
-     - `CSV_IMPORT_REQUIRED_HEADERS = [...]`
-
-8. **`wallets/admin.py`**
-   - Register `TransactionLabel` model
-
-9. **`wallets/tests.py`**
-   - Add test suite for TransactionLabel model
-   - Add test suite for CSVTransactionImporter
-   - Add integration tests for import API endpoint
-
-### Frontend Files (API Integration)
-
-10. **`frontend/api/wallets.ts`** (or similar)
-    - Add `importTransactions()` API client function
-    - Handle FormData upload with authentication
-
-## Implementation Sequence
-
-### Phase 1: Data Model Foundation
-1. Create `TransactionLabel` model in `models.py`
-2. Modify `Transaction.date` field (remove `auto_now_add`, add `default=timezone.now`)
-3. Add `labels` M2M field to `Transaction`
-4. Create and run migration: `python manage.py makemigrations && python manage.py migrate`
-5. Update `admin.py` to register `TransactionLabel`
-6. Test models in Django shell
-
-### Phase 2: Core Import Logic
-1. Create `wallets/services.py` with `CSVTransactionImporter` class
-2. Implement file validation (size, extension, headers)
-3. Implement CSV parsing with error handling
-4. Implement category get-or-create logic
-5. Implement label parsing and get-or-create logic
-6. Implement duplicate detection
-7. Implement bulk import with `transaction.atomic()`
-8. Write unit tests for service layer
-
-### Phase 3: API Endpoint
-1. Create `CSVImportSerializer` in `serializers.py`
-2. Create `TransactionLabelSerializer` in `serializers.py`
-3. Update `TransactionSerializer` to include labels
-4. Create `WalletTransactionImportView` in `views.py`
-5. Add URL pattern in `urls.py`
-6. Update `settings.py` with configuration constants
-7. Write integration tests for API endpoint
-
-### Phase 4: Testing & Validation
-1. Run all unit tests
-2. Test with provided CSV file (`transactions_export_2025-11-12_pj(1).csv`)
-3. Test error scenarios (invalid files, wrong currency, duplicates)
-4. Test security (unauthorized access, wrong wallet)
-5. Load test with large CSV files
-
-### Phase 5: Frontend Integration
-1. Create API client function for CSV import
-2. Build file upload UI component
-3. Add import button to wallet detail page
-4. Implement success/error result display
-5. Test end-to-end workflow
-
-## Key Design Decisions
-
-### ✅ Auto-create missing categories
-- Categories found in CSV but not in database will be created automatically
-- Category type inferred from transaction type (expense/income)
-- User informed which categories were created in response
-
-### ✅ Allow custom dates
-- Modify Transaction model to support historical dates
-- Essential for importing old transaction data
-
-### ✅ Check for duplicates
-- Skip transactions that match existing ones (date + amount + note)
-- User can disable via `skip_duplicates=false` parameter
-- Report how many were skipped
-
-### ✅ Labels as separate feature
-- Implement full label/tag system with M2M relationship
-- Labels are user-scoped (each user has their own labels)
-- Enables future features like filtering by label, label management UI
-
-### ℹ️ Ignore CSV Author field
-- Always use authenticated user as `created_by`
-- CSV Author field is informational only
-
-### ℹ️ Wallet selection from URL
-- Import endpoint is nested: `/api/wallets/{wallet_id}/import-transactions/`
-- User must be on specific wallet page to import
-- Prevents confusion about which wallet receives transactions
-
-## Potential Challenges & Mitigations
-
-### Challenge 1: Timezone Handling
-**Issue:** CSV dates have timezone info (+00:00), may differ from server timezone
-**Solution:** Use `django.utils.timezone` for all datetime operations, store in UTC
-
-### Challenge 2: Large File Performance
-**Issue:** 10,000 rows may be slow to process
-**Solution:** Use `bulk_create()` for efficiency, process in atomic transaction
-
-### Challenge 3: Encoding Issues
-**Issue:** CSV may use different encodings (UTF-8, UTF-8-BOM, ISO-8859-1)
-**Solution:** Try UTF-8 first, use chardet library if needed, return clear error
-
-### Challenge 4: Concurrent Imports
-**Issue:** Multiple users importing simultaneously could create race conditions
-**Solution:** Use database transactions for atomicity, duplicate detection handles overlaps
-
-### Challenge 5: Category Type Ambiguity
-**Issue:** Auto-created categories need a type (income/expense/both)
-**Solution:** Infer from transaction type, create as specific type (not 'both')
-
-## Learning Guide & Implementation Hints
-
-This section provides educational guidance, code examples, and learning resources to help you implement this feature yourself.
-
-### Phase 1: Data Models - Learning Guide
-
-#### Concept 1: Many-to-Many Relationships in Django
-
-**What you'll learn:** How M2M relationships work, when to use them vs ForeignKey
-
-**Example - TransactionLabel Model:**
+**Good approach** - User maps columns:
 ```python
-# wallets/models.py
-import uuid
-from django.db import models
-from django.contrib.auth.models import User
-from django.utils import timezone
-
-class TransactionLabel(models.Model):
-    """
-    Labels/tags for transactions. Unlike categories (one per transaction),
-    labels allow multiple tags per transaction.
-
-    Example: A transaction could have labels: ["urgent", "tax-deductible", "business"]
-    """
-    id = models.UUIDField(primary_key=True, default=uuid.uuid4, editable=False)
-    name = models.CharField(max_length=50)
-    created_by = models.ForeignKey(
-        User,
-        on_delete=models.CASCADE,
-        related_name='created_labels'
-    )
-    created_at = models.DateTimeField(auto_now_add=True)
-
-    class Meta:
-        # LEARNING: unique_together prevents duplicate label names per user
-        # This means User A can have label "work" and User B can also have "work"
-        # but User A cannot create "work" twice
-        unique_together = [['name', 'created_by']]
-        ordering = ['name']  # Always return labels alphabetically
-
-        # OPTIONAL: Add a custom index for faster queries
-        indexes = [
-            models.Index(fields=['created_by', 'name']),
-        ]
-
-    def __str__(self):
-        return self.name
+# ✅ Flexible - works with any CSV
+column_mapping = {'amount': 'Amount', 'date': 'Date', ...}  # User provides this
 ```
 
-**Hint:** Test your model in Django shell:
-```bash
-python manage.py shell
+### DRF Architecture Pattern
+
 ```
+HTTP Request
+     ↓
+┌─────────────┐
+│   URLs      │  Route request to view
+└─────────────┘
+     ↓
+┌─────────────┐
+│   View      │  Handle HTTP, call serializer & service
+└─────────────┘
+     ↓
+┌─────────────┐
+│ Serializer  │  Validate input, transform data
+└─────────────┘
+     ↓
+┌─────────────┐
+│  Service    │  Business logic (not DRF, but good practice)
+└─────────────┘
+     ↓
+┌─────────────┐
+│   Models    │  Database operations
+└─────────────┘
+```
+
+**Why this separation?**
+- **Views** handle HTTP concerns (status codes, request/response)
+- **Serializers** handle data validation and transformation
+- **Services** handle business logic (reusable from CLI, tests, Celery tasks)
+- **Models** handle database
+
+📚 **Read**: [DRF Tutorial](https://www.django-rest-framework.org/tutorial/1-serialization/)
+
+---
+
+## Step 1: Service Layer - Business Logic
+
+### Why a Service Layer?
+
+DRF doesn't require services, but they're valuable:
+
 ```python
-from django.contrib.auth.models import User
-from wallets.models import TransactionLabel
+# ❌ Fat View - hard to test, hard to reuse
+class CSVImportView(APIView):
+    def post(self, request):
+        # 200 lines of CSV parsing, validation, database operations...
+        pass
 
-# Create a label
-user = User.objects.first()
-label = TransactionLabel.objects.create(name="urgent", created_by=user)
-
-# Try to create duplicate (should fail with IntegrityError)
-TransactionLabel.objects.create(name="urgent", created_by=user)  # Error!
-
-# Different user can have same label name
-other_user = User.objects.last()
-TransactionLabel.objects.create(name="urgent", created_by=other_user)  # OK!
+# ✅ Thin View + Service - testable, reusable
+class CSVImportView(APIView):
+    def post(self, request):
+        service = CSVImportService(user, wallet, file)
+        return Response(service.execute(mapping))
 ```
 
-#### Concept 2: Modifying Existing Models
+**Benefits:**
+- Unit test business logic without HTTP
+- Reuse from management commands, Celery tasks
+- Easier to read and maintain
 
-**What you'll learn:** How to change field attributes, migration considerations
+📚 **Read**: [Service Layer Pattern](https://www.cosmicpython.com/book/chapter_04_service_layer.html)
 
-**Example - Updating Transaction Model:**
+### Create the Service
+
+**File**: `backend/wallets/services.py` (NEW FILE)
+
 ```python
-# wallets/models.py
+"""
+Generic CSV Import Service
 
-class Transaction(models.Model):
-    # ... existing fields ...
+DRF LEARNING NOTE: Services vs Views
+====================================
+This is NOT a DRF concept - it's a software design pattern.
+DRF views should be thin (handle HTTP only).
+Business logic goes in services or model methods.
 
-    # BEFORE: date = models.DateTimeField(auto_now_add=True)
-    # AFTER: Change to allow manual date setting
-    date = models.DateTimeField(default=timezone.now)
-    # LEARNING: default=timezone.now allows you to override the date when creating
-    # auto_now_add=True does NOT allow overriding
+Why?
+1. Testability - test CSV parsing without HTTP
+2. Reusability - use from management commands, Celery, etc.
+3. Clarity - views handle HTTP, services handle logic
+"""
 
-    # ... existing fields ...
-
-    # NEW: Add many-to-many relationship with labels
-    labels = models.ManyToManyField(
-        TransactionLabel,
-        related_name='transactions',  # Access from label: label.transactions.all()
-        blank=True,  # Labels are optional
-        help_text="Tags for categorizing this transaction"
-    )
-
-    class Meta:
-        # LEARNING: Indexes speed up queries that filter/order by these fields
-        # Since we'll check for duplicates using (wallet, date, amount, note),
-        # an index helps the database find matching rows faster
-        indexes = [
-            models.Index(fields=['wallet', 'date', 'amount', 'note'], name='duplicate_check_idx'),
-        ]
-```
-
-**Migration Tips:**
-```bash
-# 1. Create migration file
-python manage.py makemigrations wallets
-
-# 2. Review the migration file (ALWAYS review before running!)
-cat wallets/migrations/0002_*.py
-
-# 3. Apply migration
-python manage.py migrate wallets
-
-# 4. If you need to rollback (undo migration)
-python manage.py migrate wallets 0001  # Go back to migration 0001
-```
-
-**Common Migration Issues:**
-- Changing `auto_now_add=True` → `default=timezone.now`: Migration will ask about default value for existing rows
-- Adding M2M field: Django creates a "through" table automatically
-- If migration fails, check for data integrity issues
-
-#### Testing Your Models
-
-Create a test file to verify model behavior:
-```python
-# wallets/tests.py
-from django.test import TestCase
-from django.contrib.auth.models import User
-from wallets.models import Transaction, TransactionLabel, Wallet
-from decimal import Decimal
-
-class TransactionLabelModelTest(TestCase):
-    def setUp(self):
-        self.user = User.objects.create_user(username='testuser', password='12345')
-
-    def test_create_label(self):
-        """Test creating a label"""
-        label = TransactionLabel.objects.create(
-            name="urgent",
-            created_by=self.user
-        )
-        self.assertEqual(label.name, "urgent")
-        self.assertEqual(label.created_by, self.user)
-
-    def test_unique_constraint(self):
-        """Test that same user cannot create duplicate label names"""
-        TransactionLabel.objects.create(name="urgent", created_by=self.user)
-
-        # This should raise an error
-        from django.db import IntegrityError
-        with self.assertRaises(IntegrityError):
-            TransactionLabel.objects.create(name="urgent", created_by=self.user)
-
-    def test_transaction_with_labels(self):
-        """Test adding labels to a transaction"""
-        wallet = Wallet.objects.create(
-            name="Test Wallet",
-            user=self.user,
-            initial_value=Decimal('1000.00'),
-            currency='pln'
-        )
-
-        transaction = Transaction.objects.create(
-            note="Test purchase",
-            amount=Decimal('50.00'),
-            transaction_type='expense',
-            currency='pln',
-            wallet=wallet,
-            created_by=self.user
-        )
-
-        # Create some labels
-        label1 = TransactionLabel.objects.create(name="urgent", created_by=self.user)
-        label2 = TransactionLabel.objects.create(name="business", created_by=self.user)
-
-        # Add labels to transaction
-        transaction.labels.add(label1, label2)
-
-        # Verify
-        self.assertEqual(transaction.labels.count(), 2)
-        self.assertIn(label1, transaction.labels.all())
-
-# Run tests:
-# python manage.py test wallets.tests.TransactionLabelModelTest
-```
-
-### Phase 2: Core Import Logic - Learning Guide
-
-#### Concept 3: Service Layer Pattern
-
-**What you'll learn:** Separating business logic from views, reusable service classes
-
-**Why use a service layer?**
-- Views should be thin - they handle HTTP requests/responses
-- Services contain business logic - they can be reused in views, management commands, Celery tasks
-- Easier to test - you can test business logic without HTTP layer
-
-**Example - Basic Service Structure:**
-```python
-# wallets/services.py
 import csv
 from decimal import Decimal, InvalidOperation
 from datetime import datetime
-from django.utils import timezone
-from django.db import transaction
-from django.conf import settings
-from .models import Transaction, WalletCategory, TransactionLabel
+from collections import defaultdict
 
-class CSVTransactionImporter:
+from django.db import transaction
+from django.utils import timezone
+
+from .models import Transaction, TransactionCategory, UserTransactionTag, Wallet
+
+
+class GenericCSVImportService:
     """
-    Service class for importing transactions from CSV files.
+    Generic CSV importer with user-defined column mapping.
+
+    DRF LEARNING NOTE: Why not a ViewSet?
+    =====================================
+    ViewSets are great for CRUD operations on a single model.
+    CSV import is a custom action that doesn't fit CRUD:
+    - No model to list/retrieve/update/delete
+    - Complex multi-step process
+    - Multiple models involved (Transaction, Category, Tag)
+
+    For custom actions, use APIView or @action decorator.
 
     Usage:
-        importer = CSVTransactionImporter(wallet=my_wallet, user=request.user, csv_file=uploaded_file)
-        result = importer.import_transactions()
+        service = GenericCSVImportService(user, wallet, csv_file)
+
+        # Step 1: Parse and preview
+        preview = service.parse()
+        # Returns: columns, sample_rows, unique_values
+
+        # Step 2: Import with user's mapping
+        result = service.execute(
+            column_mapping={'amount': 'Amount', 'date': 'Date', ...},
+            amount_config={'mode': 'type_column', ...},
+            filters=[{'column': 'Wallet', 'operator': 'equals', 'value': 'Main'}]
+        )
     """
 
-    def __init__(self, wallet, user, csv_file, skip_duplicates=True):
-        self.wallet = wallet
-        self.user = user
-        self.csv_file = csv_file
-        self.skip_duplicates = skip_duplicates
-
-        # Track statistics
-        self.stats = {
-            'total_rows': 0,
-            'imported': 0,
-            'skipped_duplicates': 0,
-            'failed': 0,
-        }
-
-        # Cache for performance (avoid duplicate DB queries)
-        self.category_cache = {}  # {name: WalletCategory object}
-        self.label_cache = {}     # {name: TransactionLabel object}
-
-        # Collect errors
-        self.errors = []
-        self.created_categories = set()
-        self.created_labels = set()
-```
-
-#### Concept 4: CSV Parsing in Python
-
-**What you'll learn:** Reading CSV files, handling encoding, DictReader
-
-**Example - File Validation:**
-```python
-    def validate_file(self):
+    def __init__(self, user, wallet, csv_file):
         """
-        Validate uploaded CSV file.
-        Returns list of validation errors (empty if valid).
-        """
-        errors = []
+        Initialize the service.
 
-        # Check file size
-        if self.csv_file.size > settings.CSV_IMPORT_MAX_FILE_SIZE:
-            max_mb = settings.CSV_IMPORT_MAX_FILE_SIZE / (1024 * 1024)
-            errors.append({
-                'field': 'file',
-                'message': f'File too large. Maximum size is {max_mb}MB'
-            })
+        DRF LEARNING NOTE: Dependency Injection
+        =======================================
+        We pass user, wallet, file as constructor args instead of
+        accessing request.user inside the service. Why?
 
-        # Check file extension
-        file_name = self.csv_file.name.lower()
-        if not file_name.endswith('.csv'):
-            errors.append({
-                'field': 'file',
-                'message': 'Invalid file type. Only .csv files are allowed'
-            })
-
-        # If basic validation passes, check CSV structure
-        if not errors:
-            try:
-                # Read first line to check headers
-                self.csv_file.seek(0)  # Reset file pointer to beginning
-                first_line = self.csv_file.readline().decode('utf-8-sig')  # Handle BOM
-
-                # Parse header
-                import csv
-                reader = csv.reader([first_line])
-                headers = next(reader)
-
-                # Check required headers
-                required = settings.CSV_IMPORT_REQUIRED_HEADERS
-                missing = set(required) - set(headers)
-
-                if missing:
-                    errors.append({
-                        'field': 'file',
-                        'message': f'Missing required CSV columns: {", ".join(missing)}'
-                    })
-
-                # Reset file pointer for later reading
-                self.csv_file.seek(0)
-
-            except Exception as e:
-                errors.append({
-                    'field': 'file',
-                    'message': f'Invalid CSV format: {str(e)}'
-                })
-
-        return errors
-```
-
-**Hint - Encoding Issues:**
-```python
-# CSV files can have different encodings. Common ones:
-# - UTF-8: Standard, most common
-# - UTF-8-BOM: UTF-8 with Byte Order Mark (Excel exports often use this)
-# - ISO-8859-1 / Latin-1: Older European encoding
-
-# To handle UTF-8-BOM:
-content = self.csv_file.read().decode('utf-8-sig')  # 'sig' removes BOM
-# Or:
-import codecs
-self.csv_file = codecs.iterdecode(self.csv_file, 'utf-8-sig')
-```
-
-**Example - Parsing CSV:**
-```python
-    def parse_csv(self):
-        """
-        Parse CSV file and return rows as list of dictionaries.
-        """
-        try:
-            # Decode file content
-            self.csv_file.seek(0)
-            content = self.csv_file.read().decode('utf-8-sig')
-
-            # Parse CSV
-            lines = content.splitlines()
-            reader = csv.DictReader(lines)
-
-            rows = []
-            for row_num, row in enumerate(reader, start=1):
-                rows.append((row_num, row))
-
-                # Safety check: limit max rows
-                if len(rows) > settings.CSV_IMPORT_MAX_ROWS:
-                    raise ValueError(f'Too many rows. Maximum is {settings.CSV_IMPORT_MAX_ROWS}')
-
-            return rows
-
-        except Exception as e:
-            raise ValueError(f'Failed to parse CSV: {str(e)}')
-```
-
-#### Concept 5: Get-or-Create Pattern
-
-**What you'll learn:** Efficient database queries, avoiding duplicates
-
-**Example - Category Management:**
-```python
-    def get_or_create_category(self, name, transaction_type):
-        """
-        Get existing category by name, or create new one.
-        Uses cache to avoid repeated database queries.
+        1. Testability - easy to pass mock user/wallet in tests
+        2. Decoupling - service doesn't know about HTTP/requests
+        3. Explicit - clear what the service needs to work
 
         Args:
-            name: Category name (e.g., "Groceries")
-            transaction_type: 'income' or 'expense'
+            user: Django User instance (from request.user)
+            wallet: Wallet instance to import into
+            csv_file: Uploaded file object (InMemoryUploadedFile)
+        """
+        self.user = user
+        self.wallet = wallet
+        self.csv_file = csv_file
+        self.rows = None
+        self.columns = None
+
+        # Performance: Cache database lookups
+        # Why? Avoid N+1 queries - without cache, each row does:
+        #   Category.objects.get_or_create(name=name)  # DB query!
+        # With 1000 rows and 10 categories, that's 1000 queries
+        # instead of 10.
+        self.category_cache = {}  # {name: Category instance}
+        self.tag_cache = {}       # {name: Tag instance}
+
+        # Track what we created (for response)
+        self.created_categories = set()
+        self.created_tags = set()
+
+    def parse(self):
+        """
+        Parse CSV and return metadata for UI.
+
+        This is Step 1 - user uploads CSV, we analyze it.
+        Returns column names and sample data so UI can show
+        mapping dropdowns.
 
         Returns:
-            WalletCategory object
-        """
-        # Check cache first (fast!)
-        cache_key = f"{name}:{transaction_type}"
-        if cache_key in self.category_cache:
-            return self.category_cache[cache_key]
-
-        # Try to find existing category in database
-        try:
-            category = WalletCategory.objects.get(
-                wallet=self.wallet,
-                name=name
-            )
-            # LEARNING: You could also validate that category.type matches transaction_type
-            # or use type='both' categories
-
-        except WalletCategory.DoesNotExist:
-            # Create new category
-            category = WalletCategory.objects.create(
-                name=name,
-                wallet=self.wallet,
-                created_by=self.user,
-                type=transaction_type  # 'income' or 'expense'
-            )
-            # Track for reporting
-            self.created_categories.add(name)
-
-        # Add to cache
-        self.category_cache[cache_key] = category
-        return category
-```
-
-**Django ORM Tip:**
-```python
-# Alternative: Use Django's built-in get_or_create
-category, created = WalletCategory.objects.get_or_create(
-    wallet=self.wallet,
-    name=name,
-    defaults={
-        'created_by': self.user,
-        'type': transaction_type
-    }
-)
-# created is True if new object was created, False if it already existed
-if created:
-    self.created_categories.add(name)
-```
-
-#### Concept 6: Data Parsing and Validation
-
-**Example - Parsing Different Data Types:**
-```python
-    def parse_date(self, date_str):
-        """
-        Parse ISO 8601 date string to datetime object.
-
-        Example: "2024-11-12T19:27:47+00:00" → datetime object
+            dict: {
+                'success': bool,
+                'columns': ['Date', 'Amount', ...],
+                'sample_rows': [{...}, {...}],  # First 5 rows
+                'total_rows': int,
+                'unique_values': {
+                    'Wallet': ['Main', 'Savings'],
+                    'Type': ['Income', 'Expense']
+                }
+            }
         """
         try:
-            # Python 3.7+ supports fromisoformat
-            dt = datetime.fromisoformat(date_str)
+            self.columns, self.rows = self._parse_csv()
+        except Exception as e:
+            return {'success': False, 'error': str(e)}
 
-            # Make timezone-aware if needed
+        # Collect unique values per column (for filter dropdowns)
+        # DRF LEARNING NOTE: defaultdict
+        # ==============================
+        # defaultdict(set) creates empty set for missing keys
+        # Without it: unique_values[col].add(val) → KeyError
+        # With it: automatically creates set, then adds
+        unique_values = defaultdict(set)
+
+        for row_num, row in self.rows[:100]:  # Check first 100 rows only
+            for col in self.columns:
+                val = row.get(col, '').strip()
+                # Limit to 20 unique values per column (UI dropdown limit)
+                if val and len(unique_values[col]) < 20:
+                    unique_values[col].add(val)
+
+        # Sample rows for preview table
+        sample_rows = [row for _, row in self.rows[:5]]
+
+        return {
+            'success': True,
+            'columns': self.columns,
+            'sample_rows': sample_rows,
+            'total_rows': len(self.rows),
+            'unique_values': {k: sorted(list(v)) for k, v in unique_values.items()}
+        }
+
+    def execute(self, column_mapping, amount_config, filters=None):
+        """
+        Import transactions using user's column mapping.
+
+        This is Step 2 - user provides mapping, we import.
+
+        DRF LEARNING NOTE: Error Handling Strategy
+        ==========================================
+        We don't raise exceptions for row-level errors.
+        Instead, we collect them and return in response.
+        Why?
+        - One bad row shouldn't abort entire import
+        - User sees which rows failed and why
+        - Partial success is better than total failure
+
+        Args:
+            column_mapping: {'amount': 'CSV Column Name', 'date': 'CSV Column', ...}
+                Required: 'amount', 'date'
+                Optional: 'note', 'category', 'tags', 'type', 'currency'
+
+            amount_config: How to determine income vs expense
+                {'mode': 'signed'} - amount already has sign
+                {'mode': 'type_column', 'income_value': 'Income', 'expense_value': 'Expense'}
+                {'mode': 'always_expense'} - all rows are expenses
+                {'mode': 'always_income'} - all rows are income
+
+            filters: Optional row filters
+                [{'column': 'Wallet', 'operator': 'equals', 'value': 'Main'}]
+
+        Returns:
+            dict: {
+                'success': bool,
+                'stats': {'imported': 10, 'skipped_filtered': 5, ...},
+                'created_categories': ['New Category'],
+                'created_tags': ['new-tag'],
+                'errors': [{'row': 5, 'error': 'Invalid date'}]
+            }
+        """
+        # Parse if not already done (user might call execute directly)
+        if self.rows is None:
+            try:
+                self.columns, self.rows = self._parse_csv()
+            except Exception as e:
+                return {'success': False, 'error': str(e)}
+
+        # Validate required mappings
+        if 'amount' not in column_mapping or 'date' not in column_mapping:
+            return {'success': False, 'error': "'amount' and 'date' mappings are required"}
+
+        # Initialize stats
+        stats = {
+            'total_rows': len(self.rows),
+            'imported': 0,
+            'skipped_filtered': 0,
+            'skipped_duplicates': 0,
+            'errors': 0
+        }
+        errors = []
+
+        # Process each row
+        for row_num, row in self.rows:
+            # Apply filters first
+            if filters and not self._matches_filters(row, filters):
+                stats['skipped_filtered'] += 1
+                continue
+
+            # Try to import this row
+            result = self._import_row(row_num, row, column_mapping, amount_config)
+
+            if result == 'created':
+                stats['imported'] += 1
+            elif result == 'duplicate':
+                stats['skipped_duplicates'] += 1
+            elif result.startswith('error:'):
+                stats['errors'] += 1
+                errors.append({'row': row_num, 'error': result[6:]})
+
+        return {
+            'success': True,
+            'stats': stats,
+            'created_categories': sorted(list(self.created_categories)),
+            'created_tags': sorted(list(self.created_tags)),
+            'errors': errors[:20]  # Limit to first 20 errors
+        }
+
+    # ==================== PRIVATE METHODS ====================
+
+    def _parse_csv(self):
+        """
+        Parse CSV file into list of rows.
+
+        DRF LEARNING NOTE: File Handling
+        ================================
+        Uploaded files in Django are either:
+        - InMemoryUploadedFile (small files, <2.5MB default)
+        - TemporaryUploadedFile (large files)
+
+        Both support .read() and .seek().
+        We .seek(0) to reset position in case file was read before.
+
+        📚 Docs: https://docs.djangoproject.com/en/stable/ref/files/uploads/
+
+        Returns:
+            tuple: (columns list, rows list of (row_num, dict) tuples)
+        """
+        # Reset file pointer to beginning
+        self.csv_file.seek(0)
+        content = self.csv_file.read()
+
+        # Handle bytes vs string
+        # Uploaded files are bytes, but csv.DictReader needs string
+        if isinstance(content, bytes):
+            # utf-8-sig handles BOM (Byte Order Mark) that Excel adds
+            content = content.decode('utf-8-sig')
+
+        # Parse CSV
+        # DRF LEARNING NOTE: csv.DictReader
+        # ==================================
+        # DictReader gives us rows as dicts with header keys:
+        #   {'Date': '2024-01-01', 'Amount': '100', ...}
+        # Instead of plain lists:
+        #   ['2024-01-01', '100', ...]
+        #
+        # 📚 Docs: https://docs.python.org/3/library/csv.html#csv.DictReader
+        lines = content.splitlines()
+        reader = csv.DictReader(lines)
+
+        if not reader.fieldnames:
+            raise ValueError("CSV is empty or has no headers")
+
+        columns = list(reader.fieldnames)
+
+        # Collect rows with line numbers (for error reporting)
+        rows = []
+        for row_num, row in enumerate(reader, start=2):  # Start at 2 (1 is header)
+            rows.append((row_num, row))
+            if len(rows) > 10000:
+                raise ValueError("CSV exceeds 10,000 row limit")
+
+        return columns, rows
+
+    def _matches_filters(self, row, filters):
+        """
+        Check if row matches all filter rules.
+
+        DRF LEARNING NOTE: Filter Design
+        =================================
+        We support simple filters for MVP:
+        - equals, not_equals, contains, not_empty
+        - Multiple filters use AND logic
+
+        For complex filtering, consider:
+        - django-filter library
+        - Custom FilterSet classes
+
+        📚 Docs: https://django-filter.readthedocs.io/
+
+        Args:
+            row: Dict of CSV row data
+            filters: List of filter rules
+
+        Returns:
+            bool: True if row matches all filters
+        """
+        for f in filters:
+            col = f['column']
+            op = f['operator']
+            expected = f.get('value', '').lower()
+            actual = row.get(col, '').strip().lower()
+
+            if op == 'equals' and actual != expected:
+                return False
+            elif op == 'not_equals' and actual == expected:
+                return False
+            elif op == 'contains' and expected not in actual:
+                return False
+            elif op == 'not_empty' and not actual:
+                return False
+
+        return True
+
+    def _import_row(self, row_num, row, column_mapping, amount_config):
+        """
+        Import a single CSV row as a Transaction.
+
+        DRF LEARNING NOTE: Atomic Transactions
+        ======================================
+        We use transaction.atomic() to ensure:
+        - Either transaction + tags are saved, or nothing is
+        - No partial state if error occurs
+
+        📚 Docs: https://docs.djangoproject.com/en/stable/topics/db/transactions/
+
+        Returns:
+            str: 'created', 'duplicate', or 'error:message'
+        """
+        try:
+            # Extract values using column mapping
+            amount_str = row.get(column_mapping['amount'], '').strip()
+            date_str = row.get(column_mapping['date'], '').strip()
+
+            # Optional fields - use .get() with empty string default
+            note = ''
+            if column_mapping.get('note'):
+                note = row.get(column_mapping['note'], '').strip()
+
+            category_name = None
+            if column_mapping.get('category'):
+                category_name = row.get(column_mapping['category'], '').strip() or None
+
+            tags_str = ''
+            if column_mapping.get('tags'):
+                tags_str = row.get(column_mapping['tags'], '').strip()
+
+            currency = self.wallet.currency
+            if column_mapping.get('currency'):
+                currency = row.get(column_mapping['currency'], '').strip().lower() or self.wallet.currency
+
+            # Parse date
+            date = self._parse_date(date_str)
+
+            # Convert amount (apply sign based on amount_config)
+            amount = self._convert_amount(amount_str, row, column_mapping, amount_config)
+
+            # Validate currency matches wallet
+            if currency != self.wallet.currency:
+                return f"error:Currency '{currency}' doesn't match wallet '{self.wallet.currency}'"
+
+            # Check for duplicates
+            if self._is_duplicate(date, amount, note):
+                return 'duplicate'
+
+            # Get or create category
+            category = None
+            if category_name:
+                category = self._get_or_create_category(category_name)
+
+            # Get or create tags
+            tags = self._get_or_create_tags(tags_str)
+
+            # Create transaction atomically
+            with transaction.atomic():
+                txn = Transaction.objects.create(
+                    note=note or 'Imported transaction',
+                    amount=amount,
+                    currency=self.wallet.currency,
+                    date=date,
+                    wallet=self.wallet,
+                    created_by=self.user,
+                    category=category
+                )
+                # Set M2M relationship
+                # DRF LEARNING NOTE: M2M Assignment
+                # ==================================
+                # For ManyToMany fields, you can't set in create().
+                # Must save object first, then use .set() or .add()
+                #
+                # 📚 Docs: https://docs.djangoproject.com/en/stable/topics/db/examples/many_to_many/
+                if tags:
+                    txn.tags.set(tags)
+
+            return 'created'
+
+        except Exception as e:
+            return f'error:{str(e)}'
+
+    def _parse_date(self, date_str):
+        """
+        Parse various date formats to timezone-aware datetime.
+
+        DRF LEARNING NOTE: Timezone Handling
+        ====================================
+        Django with USE_TZ=True requires timezone-aware datetimes.
+        Naive datetime (no timezone) will cause warnings/errors.
+
+        timezone.make_aware() converts naive → aware using default TZ.
+        timezone.now() always returns aware datetime.
+
+        📚 Docs: https://docs.djangoproject.com/en/stable/topics/i18n/timezones/
+
+        Args:
+            date_str: Date string in various formats
+
+        Returns:
+            datetime: Timezone-aware datetime
+        """
+        if not date_str:
+            raise ValueError("Date is empty")
+
+        # Try ISO 8601 format first (most precise)
+        # Handles: 2024-01-15, 2024-01-15T10:30:00, 2024-01-15T10:30:00Z
+        try:
+            dt = datetime.fromisoformat(date_str.replace('Z', '+00:00'))
             if dt.tzinfo is None:
                 dt = timezone.make_aware(dt)
-
             return dt
-
         except ValueError:
-            # Try alternative parsing with dateutil (install: pip install python-dateutil)
-            from dateutil import parser
-            return parser.parse(date_str)
+            pass
 
-    def parse_amount(self, amount_str):
-        """
-        Parse amount string to Decimal.
-        CSV has negative values for expenses, but we store positive amounts.
+        # Try common formats
+        formats = [
+            '%Y-%m-%d',           # 2024-01-15
+            '%d-%m-%Y',           # 15-01-2024
+            '%m/%d/%Y',           # 01/15/2024 (US)
+            '%d/%m/%Y',           # 15/01/2024 (EU)
+            '%Y-%m-%d %H:%M:%S',  # 2024-01-15 10:30:00
+            '%d-%m-%Y %H:%M:%S',  # 15-01-2024 10:30:00
+            '%d.%m.%Y',           # 15.01.2024 (German)
+        ]
+        for fmt in formats:
+            try:
+                dt = datetime.strptime(date_str, fmt)
+                return timezone.make_aware(dt)
+            except ValueError:
+                continue
 
-        Example: "-72.08000000" → Decimal("72.08")
+        # Fallback: python-dateutil (handles almost anything)
+        # pip install python-dateutil
+        from dateutil import parser
+        dt = parser.parse(date_str)
+        if dt.tzinfo is None:
+            dt = timezone.make_aware(dt)
+        return dt
+
+    def _convert_amount(self, amount_str, row, column_mapping, amount_config):
         """
+        Convert amount string to signed Decimal.
+
+        DRF LEARNING NOTE: Decimal vs Float
+        ===================================
+        Always use Decimal for money! Float has precision issues:
+            >>> 0.1 + 0.2
+            0.30000000000000004
+
+        Decimal is exact:
+            >>> Decimal('0.1') + Decimal('0.2')
+            Decimal('0.3')
+
+        📚 Docs: https://docs.python.org/3/library/decimal.html
+
+        Args:
+            amount_str: Amount from CSV (e.g., "100.50", "1,234.56")
+            row: Full CSV row (for type_column mode)
+            column_mapping: User's column mapping
+            amount_config: Amount sign handling config
+
+        Returns:
+            Decimal: Signed amount (positive=income, negative=expense)
+        """
+        # Clean amount string
+        # Handle European format: "1.234,56" → "1234.56"
+        # Handle spaces: "1 234.56" → "1234.56"
+        amount_str = amount_str.replace(' ', '').replace(',', '.')
+
+        # Handle double dots from European thousands separator
+        # "1.234.56" should become "1234.56"
+        parts = amount_str.rsplit('.', 1)
+        if len(parts) == 2:
+            amount_str = parts[0].replace('.', '') + '.' + parts[1]
+
         try:
-            # Convert to Decimal (better than float for money!)
             amount = Decimal(amount_str)
+        except InvalidOperation:
+            raise ValueError(f"Invalid amount: '{amount_str}'")
 
-            # Return absolute value (we store positive amounts)
+        # Apply sign based on mode
+        mode = amount_config.get('mode', 'signed')
+
+        if mode == 'signed':
+            # Amount already has sign (positive=income, negative=expense)
+            return amount
+
+        elif mode == 'always_expense':
+            # All amounts are expenses (e.g., credit card statement)
+            return -abs(amount)
+
+        elif mode == 'always_income':
+            # All amounts are income
             return abs(amount)
 
-        except (InvalidOperation, ValueError):
-            raise ValueError(f'Invalid amount format: {amount_str}')
+        elif mode == 'type_column':
+            # Use separate column to determine sign
+            type_col = column_mapping.get('type')
+            if not type_col:
+                raise ValueError("'type_column' mode requires 'type' in column_mapping")
 
-    def normalize_transaction_type(self, csv_type):
-        """
-        Convert CSV type to database format.
+            type_val = row.get(type_col, '').strip().lower()
+            income_val = amount_config.get('income_value', 'income').lower()
+            expense_val = amount_config.get('expense_value', 'expense').lower()
 
-        CSV: "Income" or "Expense" (capitalized)
-        DB:  "income" or "expense" (lowercase)
-        """
-        csv_type_lower = csv_type.lower().strip()
+            if type_val == income_val:
+                return abs(amount)
+            elif type_val == expense_val:
+                return -abs(amount)
+            else:
+                raise ValueError(f"Unknown type value: '{type_val}' (expected '{income_val}' or '{expense_val}')")
 
-        if csv_type_lower not in ['income', 'expense']:
-            raise ValueError(f'Invalid transaction type: {csv_type}')
+        raise ValueError(f"Unknown amount mode: '{mode}'")
 
-        return csv_type_lower
-
-    def parse_labels(self, labels_str):
-        """
-        Parse comma-separated labels string.
-
-        Example: "iCloud,ZUS,rower" → [TransactionLabel, TransactionLabel, TransactionLabel]
-        """
-        if not labels_str or labels_str.strip() == '':
-            return []
-
-        # Split by comma, strip whitespace, filter empty
-        label_names = [name.strip() for name in labels_str.split(',') if name.strip()]
-
-        # Get or create each label
-        labels = []
-        for name in label_names:
-            label = self.get_or_create_label(name)
-            labels.append(label)
-
-        return labels
-
-    def get_or_create_label(self, name):
-        """Get or create TransactionLabel"""
-        if name in self.label_cache:
-            return self.label_cache[name]
-
-        label, created = TransactionLabel.objects.get_or_create(
-            name=name,
-            created_by=self.user
-        )
-
-        if created:
-            self.created_labels.add(name)
-
-        self.label_cache[name] = label
-        return label
-```
-
-#### Concept 7: Duplicate Detection
-
-**Example - Checking for Duplicates:**
-```python
-    def is_duplicate(self, date, amount, note):
+    def _is_duplicate(self, date, amount, note):
         """
         Check if transaction already exists.
 
-        Duplicate = same wallet + same date + same amount + same note
+        DRF LEARNING NOTE: QuerySet Methods
+        ===================================
+        .filter() returns QuerySet (lazy, chainable)
+        .exists() returns bool (efficient, stops at first match)
+        .count() returns int (counts all matches)
+
+        For "does it exist?" checks, always use .exists()
+        It's faster than .count() > 0 or bool(.filter())
+
+        📚 Docs: https://docs.djangoproject.com/en/stable/ref/models/querysets/#exists
+
+        Why date__date?
+        ===============
+        date__date extracts just the date part from datetime.
+        This ignores time differences (timezone issues, etc.)
+
+        📚 Docs: https://docs.djangoproject.com/en/stable/ref/models/querysets/#date
         """
-        # LEARNING: Django ORM query with multiple filters
-        exists = Transaction.objects.filter(
+        return Transaction.objects.filter(
             wallet=self.wallet,
-            date=date,
+            date__date=date.date(),  # Compare date only, ignore time
             amount=amount,
             note=note
-        ).exists()  # exists() is faster than count() > 0
+        ).exists()
 
-        return exists
-```
-
-**Advanced Duplicate Detection:**
-```python
-    def is_duplicate_fuzzy(self, date, amount, note):
+    def _get_or_create_category(self, name):
         """
-        More sophisticated duplicate detection:
-        - Date within same day (ignore time)
-        - Amount matches (rounded to 2 decimals)
-        - Note matches (case-insensitive, whitespace normalized)
+        Get existing category or create new one.
+
+        DRF LEARNING NOTE: get_or_create()
+        ==================================
+        Atomic operation that either:
+        - Gets existing object matching criteria
+        - Creates new object with defaults
+
+        Returns tuple: (object, created_bool)
+
+        Why use it?
+        - Thread-safe (uses database locking)
+        - Avoids race conditions
+        - Single database round-trip
+
+        📚 Docs: https://docs.djangoproject.com/en/stable/ref/models/querysets/#get-or-create
+
+        DRF LEARNING NOTE: Caching
+        ==========================
+        We cache results to avoid N+1 queries.
+        Without cache: 1000 rows with same category = 1000 queries
+        With cache: 1000 rows with same category = 1 query + 999 cache hits
         """
-        from django.db.models import Q
-        from datetime import timedelta
+        # Check cache first
+        if name in self.category_cache:
+            return self.category_cache[name]
 
-        # Get date range (same day)
-        date_start = date.replace(hour=0, minute=0, second=0, microsecond=0)
-        date_end = date_start + timedelta(days=1)
-
-        # Normalize note
-        note_normalized = note.strip().lower()
-
-        # Query
-        duplicates = Transaction.objects.filter(
-            wallet=self.wallet,
-            date__gte=date_start,
-            date__lt=date_end,
-            amount=round(amount, 2)
+        # Get or create (user-scoped categories)
+        category, created = TransactionCategory.objects.get_or_create(
+            user=self.user,
+            name=name,
+            defaults={
+                'icon': 'tag',       # Default icon
+                'color': '#6B7280'   # Default gray
+            }
         )
 
-        # Check note similarity
-        for txn in duplicates:
-            if txn.note.strip().lower() == note_normalized:
-                return True
+        if created:
+            self.created_categories.add(name)
 
-        return False
-```
+        # Cache for future lookups
+        self.category_cache[name] = category
+        return category
 
-#### Concept 8: Bulk Operations and Transactions
-
-**What you'll learn:** Atomic transactions, bulk_create for performance
-
-**Example - Main Import Method:**
-```python
-    def import_transactions(self):
+    def _get_or_create_tags(self, tags_str):
         """
-        Main import method. Orchestrates entire import process.
+        Parse comma-separated tags and get/create each.
+
+        DRF LEARNING NOTE: String Parsing
+        =================================
+        CSV tags might be: "food, urgent, recurring"
+        We split by comma and strip whitespace from each.
+
+        List comprehension with filter:
+            [x.strip() for x in tags_str.split(',') if x.strip()]
+
+        The 'if x.strip()' filters out empty strings from
+        inputs like "food,,urgent" or "food, , urgent"
         """
-        # 1. Validate file
-        validation_errors = self.validate_file()
-        if validation_errors:
-            return {
-                'status': 'error',
-                'errors': validation_errors,
-                'stats': self.stats
-            }
+        if not tags_str:
+            return []
 
-        # 2. Parse CSV
-        try:
-            rows = self.parse_csv()
-            self.stats['total_rows'] = len(rows)
-        except ValueError as e:
-            return {
-                'status': 'error',
-                'errors': [{'field': 'file', 'message': str(e)}],
-                'stats': self.stats
-            }
+        tags = []
+        for name in [t.strip() for t in tags_str.split(',') if t.strip()]:
+            # Check cache
+            if name in self.tag_cache:
+                tags.append(self.tag_cache[name])
+                continue
 
-        # 3. Process each row
-        transactions_to_create = []
-        transactions_labels_map = {}  # Map transaction index to list of labels
-
-        for row_num, row_data in rows:
-            try:
-                # Process row
-                txn_data, labels = self.process_row(row_num, row_data)
-
-                if txn_data:  # Only if not skipped as duplicate
-                    transactions_to_create.append(txn_data)
-                    transactions_labels_map[len(transactions_to_create) - 1] = labels
-
-            except Exception as e:
-                # Collect error and continue
-                self.errors.append({
-                    'row': row_num,
-                    'message': str(e),
-                    'data': row_data
-                })
-                self.stats['failed'] += 1
-
-        # 4. Bulk create transactions (atomic!)
-        if transactions_to_create:
-            try:
-                with transaction.atomic():  # LEARNING: All-or-nothing
-                    # Create all transactions at once
-                    created_transactions = Transaction.objects.bulk_create(
-                        transactions_to_create
-                    )
-
-                    self.stats['imported'] = len(created_transactions)
-
-                    # Create M2M relationships for labels
-                    # LEARNING: bulk_create doesn't support M2M, must do separately
-                    for idx, txn in enumerate(created_transactions):
-                        if idx in transactions_labels_map:
-                            labels = transactions_labels_map[idx]
-                            txn.labels.set(labels)  # Set all labels at once
-
-            except Exception as e:
-                return {
-                    'status': 'error',
-                    'errors': [{'message': f'Database error: {str(e)}'}],
-                    'stats': self.stats
+            # Get or create
+            tag, created = UserTransactionTag.objects.get_or_create(
+                user=self.user,
+                name=name,
+                defaults={
+                    'icon': 'tag',
+                    'color': '#3B82F6'  # Blue
                 }
-
-        # 5. Return results
-        return {
-            'status': 'success',
-            'stats': self.stats,
-            'errors': self.errors,
-            'created_categories': list(self.created_categories),
-            'created_labels': list(self.created_labels)
-        }
-
-    def process_row(self, row_num, row_data):
-        """
-        Process a single CSV row.
-
-        Returns:
-            (Transaction object, list of labels) or (None, None) if skipped
-
-        Raises:
-            ValueError: If row data is invalid
-        """
-        # Parse all fields
-        date = self.parse_date(row_data['Date'])
-        txn_type = self.normalize_transaction_type(row_data['Type'])
-        amount = self.parse_amount(row_data['Amount'])
-        currency = row_data['Currency'].lower()
-        note = row_data['Note'].strip() if row_data['Note'] else ''
-        category_name = row_data['Category name'].strip()
-        labels_str = row_data.get('Labels', '')
-
-        # Validate currency matches wallet
-        if currency != self.wallet.currency:
-            raise ValueError(
-                f'Currency mismatch: transaction has {currency}, '
-                f'wallet requires {self.wallet.currency}'
             )
 
-        # Check for duplicates
-        if self.skip_duplicates and self.is_duplicate(date, amount, note):
-            self.stats['skipped_duplicates'] += 1
-            return None, None
+            if created:
+                self.created_tags.add(name)
 
-        # Get or create category
-        category = self.get_or_create_category(category_name, txn_type)
+            self.tag_cache[name] = tag
+            tags.append(tag)
 
-        # Parse labels
-        labels = self.parse_labels(labels_str)
-
-        # Create transaction object (not saved yet!)
-        txn = Transaction(
-            note=note,
-            amount=amount,
-            transaction_type=txn_type,
-            currency=currency,
-            date=date,
-            wallet=self.wallet,
-            created_by=self.user,
-            category=category
-        )
-
-        return txn, labels
+        return tags
 ```
 
-**Learning Points:**
-- `transaction.atomic()`: Database transaction - if any error occurs, ALL changes are rolled back
-- `bulk_create()`: Creates multiple objects in single SQL query (much faster than loop)
-- M2M relationships: Cannot be set during bulk_create, must do after objects are saved
+---
 
-### Phase 3: API Endpoint - Learning Guide
+## Step 2: Serializers - Validation & Transformation
 
-#### Concept 9: DRF APIView for File Uploads
+### What Are Serializers?
 
-**What you'll learn:** Handling file uploads in DRF, multipart/form-data, custom responses
+Serializers are DRF's core concept. They handle:
 
-**Example - View Implementation:**
+1. **Deserialization**: JSON/form data → Python objects (input)
+2. **Validation**: Check data is valid
+3. **Serialization**: Python objects → JSON (output)
+
+Think of them as Django Forms for APIs.
+
+📚 **Read**: [DRF Serializers](https://www.django-rest-framework.org/api-guide/serializers/)
+
+### Serializer vs ModelSerializer
+
 ```python
-# wallets/views.py
+# ModelSerializer - auto-generates fields from model
+# Use when: CRUD operations on a model
+class TransactionSerializer(serializers.ModelSerializer):
+    class Meta:
+        model = Transaction
+        fields = ['id', 'amount', 'date', 'note']
+
+# Serializer - define fields manually
+# Use when: Custom input that doesn't map to a model
+class CSVImportSerializer(serializers.Serializer):
+    file = serializers.FileField()
+    column_mapping = serializers.DictField()
+```
+
+**Our case**: CSV import input doesn't map to any model, so we use `Serializer`.
+
+📚 **Read**: [ModelSerializer](https://www.django-rest-framework.org/api-guide/serializers/#modelserializer)
+
+### Create the Serializers
+
+**File**: `backend/wallets/serializers.py` (add at end)
+
+```python
+# ============================================================
+# CSV IMPORT SERIALIZERS
+# ============================================================
+#
+# DRF LEARNING NOTE: Nested Serializers
+# =====================================
+# Serializers can be nested. Our structure:
+#
+# CSVExecuteSerializer
+#   ├── file (FileField)
+#   ├── column_mapping (DictField)
+#   ├── amount_config (AmountConfigSerializer)  ← nested
+#   └── filters (FilterRuleSerializer, many=True)  ← nested list
+#
+# 📚 Docs: https://www.django-rest-framework.org/api-guide/serializers/#dealing-with-nested-objects
+
+
+class CSVParseSerializer(serializers.Serializer):
+    """
+    Validate file upload for CSV parsing (Step 1).
+
+    DRF LEARNING NOTE: FileField
+    ============================
+    FileField handles uploaded files. The validated value is
+    an UploadedFile object with:
+    - .name - filename
+    - .size - file size in bytes
+    - .read() - get file contents
+    - .seek(0) - reset read position
+
+    📚 Docs: https://www.django-rest-framework.org/api-guide/fields/#filefield
+    """
+    file = serializers.FileField(
+        required=True,
+        help_text="CSV file to parse"
+    )
+
+    def validate_file(self, value):
+        """
+        Custom field validation.
+
+        DRF LEARNING NOTE: validate_<field_name>
+        ========================================
+        DRF calls validate_<field_name> for each field.
+        Raise ValidationError to reject, or return value to accept.
+
+        Validation order:
+        1. Field-level: validate_<field_name>()
+        2. Object-level: validate() (access all fields)
+
+        📚 Docs: https://www.django-rest-framework.org/api-guide/serializers/#field-level-validation
+        """
+        # Check extension
+        if not value.name.lower().endswith('.csv'):
+            raise serializers.ValidationError(
+                "File must be a CSV (.csv extension)"
+            )
+
+        # Check size (5MB limit)
+        max_size = 5 * 1024 * 1024  # 5MB in bytes
+        if value.size > max_size:
+            raise serializers.ValidationError(
+                f"File too large. Maximum size is 5MB, got {value.size / 1024 / 1024:.1f}MB"
+            )
+
+        return value
+
+
+class FilterRuleSerializer(serializers.Serializer):
+    """
+    Single filter rule for row filtering.
+
+    DRF LEARNING NOTE: ChoiceField
+    ==============================
+    ChoiceField restricts input to specific values.
+    Invalid values get clear error message:
+    "operator: \"invalid\" is not a valid choice."
+
+    📚 Docs: https://www.django-rest-framework.org/api-guide/fields/#choicefield
+
+    Example filter:
+        {"column": "Wallet", "operator": "equals", "value": "Main"}
+    """
+    column = serializers.CharField(
+        help_text="CSV column name to filter on"
+    )
+    operator = serializers.ChoiceField(
+        choices=['equals', 'not_equals', 'contains', 'not_empty'],
+        help_text="Filter operator"
+    )
+    value = serializers.CharField(
+        allow_blank=True,
+        required=False,
+        default='',
+        help_text="Value to compare (not needed for 'not_empty')"
+    )
+
+
+class AmountConfigSerializer(serializers.Serializer):
+    """
+    Configuration for amount sign handling.
+
+    DRF LEARNING NOTE: Default Values
+    =================================
+    - required=False + default='x' → field optional, defaults to 'x'
+    - required=False (no default) → field optional, defaults to None
+    - required=True (default) → field must be provided
+
+    📚 Docs: https://www.django-rest-framework.org/api-guide/fields/#core-arguments
+    """
+    mode = serializers.ChoiceField(
+        choices=['signed', 'type_column', 'always_expense', 'always_income'],
+        help_text=(
+            "How to determine transaction sign:\n"
+            "- signed: Amount already has sign (+/-)\n"
+            "- type_column: Use separate column (requires 'type' in mapping)\n"
+            "- always_expense: All transactions are expenses\n"
+            "- always_income: All transactions are income"
+        )
+    )
+    income_value = serializers.CharField(
+        required=False,
+        default='income',
+        help_text="Value in type column that indicates income (for type_column mode)"
+    )
+    expense_value = serializers.CharField(
+        required=False,
+        default='expense',
+        help_text="Value in type column that indicates expense (for type_column mode)"
+    )
+
+
+class CSVExecuteSerializer(serializers.Serializer):
+    """
+    Validate import execution request (Step 2).
+
+    DRF LEARNING NOTE: DictField and Nested Serializers
+    ===================================================
+    - DictField: arbitrary key-value pairs
+    - Nested serializer: structured object with known fields
+
+    column_mapping is DictField because keys are dynamic (CSV columns).
+    amount_config is nested serializer because structure is fixed.
+
+    📚 Docs:
+    - DictField: https://www.django-rest-framework.org/api-guide/fields/#dictfield
+    - Nested: https://www.django-rest-framework.org/api-guide/serializers/#dealing-with-nested-objects
+    """
+    file = serializers.FileField(required=True)
+
+    column_mapping = serializers.DictField(
+        child=serializers.CharField(allow_blank=True),
+        help_text=(
+            "Map app fields to CSV columns:\n"
+            "Required: 'amount', 'date'\n"
+            "Optional: 'note', 'category', 'tags', 'type', 'currency'\n"
+            "Example: {'amount': 'Amount', 'date': 'Date', 'note': 'Description'}"
+        )
+    )
+
+    amount_config = AmountConfigSerializer(
+        help_text="How to determine income vs expense"
+    )
+
+    filters = FilterRuleSerializer(
+        many=True,  # Accept list of filters
+        required=False,
+        default=list,
+        help_text="Optional row filters. Multiple filters use AND logic."
+    )
+
+    def validate_file(self, value):
+        """Same validation as CSVParseSerializer."""
+        if not value.name.lower().endswith('.csv'):
+            raise serializers.ValidationError("File must be a CSV")
+        if value.size > 5 * 1024 * 1024:
+            raise serializers.ValidationError("File too large (max 5MB)")
+        return value
+
+    def validate_column_mapping(self, value):
+        """
+        Validate required fields are mapped.
+
+        DRF LEARNING NOTE: Field vs Object Validation
+        =============================================
+        - validate_<field>: validate single field
+        - validate(): validate across multiple fields
+
+        Here we check column_mapping has required keys.
+        We could also use validate() if we needed to check
+        column_mapping against amount_config.
+
+        📚 Docs: https://www.django-rest-framework.org/api-guide/serializers/#object-level-validation
+        """
+        required = ['amount', 'date']
+        missing = [f for f in required if f not in value or not value[f]]
+
+        if missing:
+            raise serializers.ValidationError(
+                f"Required mappings missing: {', '.join(missing)}"
+            )
+
+        return value
+
+    def validate(self, data):
+        """
+        Object-level validation (cross-field).
+
+        DRF LEARNING NOTE: validate() Method
+        ====================================
+        Called after all field validations pass.
+        Has access to all fields via 'data' dict.
+        Use for validation that depends on multiple fields.
+
+        📚 Docs: https://www.django-rest-framework.org/api-guide/serializers/#object-level-validation
+        """
+        # If mode is type_column, 'type' must be in column_mapping
+        amount_config = data.get('amount_config', {})
+        column_mapping = data.get('column_mapping', {})
+
+        if amount_config.get('mode') == 'type_column':
+            if 'type' not in column_mapping or not column_mapping['type']:
+                raise serializers.ValidationError({
+                    'column_mapping': "'type' mapping required when using 'type_column' mode"
+                })
+
+        return data
+```
+
+---
+
+## Step 3: Views - HTTP Handling
+
+### APIView vs ViewSet
+
+| Feature | APIView | ViewSet |
+|---------|---------|---------|
+| **Use case** | Custom actions | CRUD on model |
+| **URL routing** | Manual | Automatic via Router |
+| **Methods** | get(), post(), etc. | list(), create(), retrieve(), etc. |
+| **Flexibility** | High | Medium |
+
+**Our case**: CSV import doesn't fit CRUD pattern, so we use `APIView`.
+
+📚 **Read**:
+- [APIView](https://www.django-rest-framework.org/api-guide/views/)
+- [ViewSets](https://www.django-rest-framework.org/api-guide/viewsets/)
+
+### Create the Views
+
+**File**: `backend/wallets/views.py` (add at end)
+
+```python
+# ============================================================
+# CSV IMPORT VIEWS
+# ============================================================
+#
+# DRF LEARNING NOTE: View Responsibilities
+# ========================================
+# Views should be thin! They handle HTTP concerns:
+# 1. Parse request data
+# 2. Call serializer for validation
+# 3. Call service for business logic
+# 4. Return response with appropriate status
+#
+# Business logic goes in services, NOT views.
+
 from rest_framework.views import APIView
 from rest_framework.response import Response
 from rest_framework import status
 from rest_framework.permissions import IsAuthenticated
 from rest_framework_simplejwt.authentication import JWTAuthentication
-from django.shortcuts import get_object_or_404
 
 from .models import Wallet
-from .serializers import CSVImportSerializer
-from .services import CSVTransactionImporter
+from .services import GenericCSVImportService
+from .serializers import CSVParseSerializer, CSVExecuteSerializer
 
-class WalletTransactionImportView(APIView):
+
+class CSVParseView(APIView):
     """
-    API endpoint for importing transactions from CSV file.
+    Step 1: Parse CSV and return column info.
 
-    POST /api/wallets/{wallet_id}/import-transactions/
+    POST /api/wallets/<wallet_id>/import/parse/
 
-    Request body (multipart/form-data):
-    - file: CSV file
-    - skip_duplicates: boolean (default: true)
-    - dry_run: boolean (default: false)
+    DRF LEARNING NOTE: APIView Class Attributes
+    ===========================================
+    - permission_classes: Who can access? [IsAuthenticated] = logged in users
+    - authentication_classes: How to identify user? [JWTAuthentication] = JWT token
+    - parser_classes: How to parse request body? (default includes JSON, form, multipart)
+    - renderer_classes: How to render response? (default includes JSON)
+
+    📚 Docs: https://www.django-rest-framework.org/api-guide/views/#api-policy-attributes
+
+    DRF LEARNING NOTE: Why Not @api_view?
+    =====================================
+    DRF has two styles:
+    1. Function-based: @api_view(['POST'])
+    2. Class-based: APIView
+
+    Class-based is better for:
+    - Organizing related methods (get, post, put, delete)
+    - Sharing code via inheritance
+    - Class attributes (permission_classes, etc.)
+
+    📚 Docs: https://www.django-rest-framework.org/api-guide/views/#function-based-views
     """
     permission_classes = [IsAuthenticated]
     authentication_classes = [JWTAuthentication]
 
     def post(self, request, wallet_id):
-        # 1. Validate wallet ownership
-        # LEARNING: get_object_or_404 raises 404 if not found OR if user doesn't match
-        wallet = get_object_or_404(
-            Wallet,
-            id=wallet_id,
-            user=request.user  # Security: user can only import to their own wallet
-        )
+        """
+        Handle POST request.
 
-        # 2. Validate request data
-        serializer = CSVImportSerializer(data=request.data)
+        DRF LEARNING NOTE: Request Object
+        =================================
+        DRF's Request extends Django's HttpRequest:
+        - request.data: Parsed body (JSON, form, multipart)
+        - request.query_params: URL query params (?key=value)
+        - request.user: Authenticated user (or AnonymousUser)
+        - request.FILES: Uploaded files (also in request.data for multipart)
+
+        📚 Docs: https://www.django-rest-framework.org/api-guide/requests/
+        """
+        # Get wallet (security: only user's wallets)
+        try:
+            wallet = Wallet.objects.get(id=wallet_id, user=request.user)
+        except Wallet.DoesNotExist:
+            return Response(
+                {'error': 'Wallet not found'},
+                status=status.HTTP_404_NOT_FOUND
+            )
+
+        # Validate input
+        # DRF LEARNING NOTE: Serializer Usage Pattern
+        # ===========================================
+        # 1. Create serializer with data=request.data
+        # 2. Call .is_valid() to run validation
+        # 3. Access .validated_data for clean data
+        # 4. Access .errors for validation errors
+        #
+        # Alternative: is_valid(raise_exception=True) raises ValidationError
+        #
+        # 📚 Docs: https://www.django-rest-framework.org/api-guide/serializers/#validation
+        serializer = CSVParseSerializer(data=request.data)
         if not serializer.is_valid():
             return Response(
                 serializer.errors,
                 status=status.HTTP_400_BAD_REQUEST
             )
 
-        # 3. Extract validated data
-        csv_file = serializer.validated_data['file']
-        skip_duplicates = serializer.validated_data.get('skip_duplicates', True)
-        dry_run = serializer.validated_data.get('dry_run', False)
-
-        # 4. Create importer and run
-        importer = CSVTransactionImporter(
-            wallet=wallet,
+        # Call service (business logic)
+        service = GenericCSVImportService(
             user=request.user,
-            csv_file=csv_file,
-            skip_duplicates=skip_duplicates
+            wallet=wallet,
+            csv_file=serializer.validated_data['file']
         )
+        result = service.parse()
 
-        # 5. Import transactions
-        result = importer.import_transactions()
-
-        # 6. Return appropriate response
-        if result['status'] == 'error':
+        # Return response
+        # DRF LEARNING NOTE: Response Object
+        # ==================================
+        # Response(data, status, headers)
+        # - data: Will be serialized to JSON (or other format)
+        # - status: HTTP status code (use status.HTTP_xxx constants)
+        #
+        # 📚 Docs: https://www.django-rest-framework.org/api-guide/responses/
+        if not result.get('success'):
             return Response(result, status=status.HTTP_400_BAD_REQUEST)
 
-        if result['errors']:
-            # Partial success - some rows failed
+        return Response(result, status=status.HTTP_200_OK)
+
+
+class CSVExecuteView(APIView):
+    """
+    Step 2: Execute import with user's column mapping.
+
+    POST /api/wallets/<wallet_id>/import/execute/
+
+    DRF LEARNING NOTE: Idempotency
+    ==============================
+    This endpoint is NOT idempotent (calling twice creates duplicates).
+    We have duplicate detection to mitigate, but consider:
+    - Adding idempotency key header
+    - Tracking import jobs in database
+    - Returning 409 Conflict if same file imported recently
+
+    📚 Read: https://stripe.com/docs/api/idempotent_requests
+    """
+    permission_classes = [IsAuthenticated]
+    authentication_classes = [JWTAuthentication]
+
+    def post(self, request, wallet_id):
+        """Execute CSV import with mapping."""
+        # Get wallet
+        try:
+            wallet = Wallet.objects.get(id=wallet_id, user=request.user)
+        except Wallet.DoesNotExist:
             return Response(
-                {
-                    'status': 'partial_success',
-                    'summary': result['stats'],
-                    'created_categories': result['created_categories'],
-                    'created_labels': result['created_labels'],
-                    'errors': result['errors']
-                },
-                status=status.HTTP_200_OK
+                {'error': 'Wallet not found'},
+                status=status.HTTP_404_NOT_FOUND
             )
 
-        # Complete success
-        return Response(
-            {
-                'status': 'success',
-                'summary': result['stats'],
-                'created_categories': result['created_categories'],
-                'created_labels': result['created_labels']
-            },
-            status=status.HTTP_200_OK
+        # Validate input
+        serializer = CSVExecuteSerializer(data=request.data)
+        if not serializer.is_valid():
+            # DRF LEARNING NOTE: Error Response Format
+            # ========================================
+            # serializer.errors returns dict of field → errors:
+            # {
+            #     'column_mapping': ['Required mappings missing: amount, date'],
+            #     'file': ['File too large']
+            # }
+            #
+            # For non-field errors, key is 'non_field_errors'
+            #
+            # 📚 Docs: https://www.django-rest-framework.org/api-guide/serializers/#validation
+            return Response(
+                serializer.errors,
+                status=status.HTTP_400_BAD_REQUEST
+            )
+
+        # Extract validated data
+        data = serializer.validated_data
+
+        # Execute import
+        service = GenericCSVImportService(
+            user=request.user,
+            wallet=wallet,
+            csv_file=data['file']
         )
+        result = service.execute(
+            column_mapping=data['column_mapping'],
+            amount_config=data['amount_config'],
+            filters=data.get('filters', [])
+        )
+
+        if not result.get('success'):
+            return Response(result, status=status.HTTP_400_BAD_REQUEST)
+
+        # DRF LEARNING NOTE: Status Codes
+        # ===============================
+        # 200 OK: Request succeeded, returning data
+        # 201 CREATED: Resource created (for POST creating new item)
+        # 204 NO CONTENT: Success, no body (for DELETE)
+        # 400 BAD REQUEST: Invalid input
+        # 401 UNAUTHORIZED: Not authenticated
+        # 403 FORBIDDEN: Authenticated but not allowed
+        # 404 NOT FOUND: Resource doesn't exist
+        #
+        # We use 200 (not 201) because we're returning stats,
+        # not the created resources.
+        #
+        # 📚 Docs: https://www.django-rest-framework.org/api-guide/status-codes/
+        return Response(result, status=status.HTTP_200_OK)
 ```
 
-#### Concept 10: Custom Serializers for File Upload
+---
 
-**Example - Serializer:**
+## Step 4: URL Routing
+
+### DRF URL Patterns
+
+Two approaches:
+1. **Manual**: `path()` with `.as_view()`
+2. **Router**: Auto-generates URLs for ViewSets
+
+We use manual because APIView doesn't work with Router.
+
+📚 **Read**: [DRF Routers](https://www.django-rest-framework.org/api-guide/routers/)
+
+### Add URL Routes
+
+**File**: `backend/wallets/urls.py`
+
 ```python
-# wallets/serializers.py
-from rest_framework import serializers
+"""
+URL Configuration for wallets app.
 
-class CSVImportSerializer(serializers.Serializer):
-    """
-    Serializer for CSV import request validation.
+DRF LEARNING NOTE: URL Design
+=============================
+RESTful URL patterns:
+- /wallets/              → list all wallets
+- /wallets/<id>/         → single wallet
+- /wallets/<id>/import/  → wallet sub-resource
 
-    LEARNING: This is NOT a ModelSerializer because we're not working with a Django model.
-    We use Serializer for custom validation of arbitrary data.
-    """
-    file = serializers.FileField(
-        help_text="CSV file to import",
-        required=True
-    )
-    skip_duplicates = serializers.BooleanField(
-        default=True,
-        required=False,
-        help_text="Skip transactions that already exist"
-    )
-    dry_run = serializers.BooleanField(
-        default=False,
-        required=False,
-        help_text="Validate CSV without importing"
-    )
+Our import endpoints are nested under wallet:
+- POST /wallets/<id>/import/parse/   → parse CSV
+- POST /wallets/<id>/import/execute/ → execute import
 
-    def validate_file(self, value):
-        """
-        Custom validation for file field.
+Why nested? Import is an action ON a wallet, not a separate resource.
 
-        LEARNING: validate_<field_name> methods are called automatically
-        """
-        # Check file extension
-        if not value.name.endswith('.csv'):
-            raise serializers.ValidationError('Only CSV files are allowed')
+📚 Read: https://restfulapi.net/resource-naming/
+"""
 
-        # Check file size (5MB limit)
-        max_size = 5 * 1024 * 1024
-        if value.size > max_size:
-            raise serializers.ValidationError(f'File too large. Maximum size is 5MB')
+from django.urls import path, include
+from rest_framework.routers import DefaultRouter
 
-        return value
-
-
-class TransactionLabelSerializer(serializers.ModelSerializer):
-    """Serializer for TransactionLabel model"""
-
-    class Meta:
-        model = TransactionLabel
-        fields = ['id', 'name', 'created_at']
-        read_only_fields = ['id', 'created_at']
-
-
-# Update existing TransactionSerializer to include labels
-class TransactionSerializer(serializers.ModelSerializer):
-    labels = TransactionLabelSerializer(many=True, read_only=True)
-    # LEARNING: many=True means this is a list of labels
-    # read_only=True means labels are not required when creating/updating
-
-    class Meta:
-        model = Transaction
-        fields = ['id', 'note', 'amount', 'transaction_type',
-                  'currency', 'date', 'category', 'labels']
-```
-
-#### Concept 11: URL Routing
-
-**Example - URLs:**
-```python
-# wallets/urls.py
-from django.urls import path
 from .views import (
-    WalletList, WalletDetail, WalletTransactionList,
-    WalletTransactionDetail, WalletTransactionImportView,
-    # ... other views
+    WalletViewSet,
+    TransactionViewSet,
+    TransactionCategoryViewSet,
+    UserTransactionTagViewSet,
+    # Import views
+    CSVParseView,
+    CSVExecuteView,
 )
 
-urlpatterns = [
-    # Existing routes
-    path('', WalletList.as_view(), name='wallet-list'),
-    path('<uuid:wallet_id>/', WalletDetail.as_view(), name='wallet-detail'),
-    path('<uuid:wallet_id>/transactions/', WalletTransactionList.as_view(), name='wallet-transaction-list'),
+# DRF LEARNING NOTE: DefaultRouter
+# ================================
+# Router auto-generates URLs for ViewSets:
+# - GET /wallets/ → list()
+# - POST /wallets/ → create()
+# - GET /wallets/<pk>/ → retrieve()
+# - PUT /wallets/<pk>/ → update()
+# - DELETE /wallets/<pk>/ → destroy()
+#
+# 📚 Docs: https://www.django-rest-framework.org/api-guide/routers/
 
-    # NEW: Import endpoint
+router = DefaultRouter()
+router.register('wallets', WalletViewSet, basename='wallet')
+router.register('transactions', TransactionViewSet, basename='transaction')
+router.register('categories', TransactionCategoryViewSet, basename='category')
+router.register('tags', UserTransactionTagViewSet, basename='tag')
+
+urlpatterns = [
+    # Router URLs (ViewSets)
+    path('', include(router.urls)),
+
+    # Manual URLs (APIViews)
+    # DRF LEARNING NOTE: URL Parameters
+    # =================================
+    # <uuid:wallet_id> captures UUID and passes to view as wallet_id
+    # Django URL converters: str, int, slug, uuid, path
+    #
+    # 📚 Docs: https://docs.djangoproject.com/en/stable/topics/http/urls/#path-converters
     path(
-        '<uuid:wallet_id>/import-transactions/',
-        WalletTransactionImportView.as_view(),
-        name='wallet-transaction-import'
+        'wallets/<uuid:wallet_id>/import/parse/',
+        CSVParseView.as_view(),
+        name='csv-import-parse'
     ),
-    # LEARNING: URL parameters like <uuid:wallet_id> are passed to view as kwargs
+    path(
+        'wallets/<uuid:wallet_id>/import/execute/',
+        CSVExecuteView.as_view(),
+        name='csv-import-execute'
+    ),
 ]
 ```
 
-### Testing Your Implementation
+---
 
-**Run tests:**
-```bash
-# All tests
-python manage.py test
+## Step 5: Testing
 
-# Specific test file
-python manage.py test wallets.tests
+### Test with cURL
 
-# Specific test class
-python manage.py test wallets.tests.CSVTransactionImporterTest
-
-# Specific test method
-python manage.py test wallets.tests.CSVTransactionImporterTest.test_parse_csv_basic
-
-# With verbose output
-python manage.py test --verbosity=2
-```
-
-**Manual testing with curl:**
 ```bash
 # 1. Get JWT token
 curl -X POST http://localhost:8000/api/token/ \
   -H "Content-Type: application/json" \
-  -d '{"username": "youruser", "password": "yourpass"}'
+  -d '{"username": "your_user", "password": "your_pass"}'
 
-# Response: {"access": "eyJ...", "refresh": "eyJ..."}
+# Save the access token
+TOKEN="eyJ..."
 
-# 2. Import CSV
-curl -X POST http://localhost:8000/api/wallets/<WALLET_ID>/import-transactions/ \
-  -H "Authorization: Bearer <ACCESS_TOKEN>" \
-  -F "file=@/path/to/your/file.csv" \
-  -F "skip_duplicates=true"
+# 2. List your wallets (get wallet ID)
+curl -X GET http://localhost:8000/api/wallets/ \
+  -H "Authorization: Bearer $TOKEN"
+
+# Save wallet ID
+WALLET_ID="uuid-of-your-wallet"
+
+# 3. Create test CSV
+cat > test.csv << 'EOF'
+Date,Wallet,Type,Category name,Amount,Currency,Note,Labels
+2024-11-12,Main,Expense,Groceries,72.08,pln,Weekly shopping,"food,recurring"
+2024-11-11,Main,Income,Salary,3000.00,pln,Monthly salary,
+2024-11-10,Savings,Expense,Transport,15.50,pln,Bus ticket,
+EOF
+
+# 4. Step 1: Parse CSV
+curl -X POST "http://localhost:8000/api/wallets/$WALLET_ID/import/parse/" \
+  -H "Authorization: Bearer $TOKEN" \
+  -F "file=@test.csv"
+
+# 5. Step 2: Execute import
+curl -X POST "http://localhost:8000/api/wallets/$WALLET_ID/import/execute/" \
+  -H "Authorization: Bearer $TOKEN" \
+  -F "file=@test.csv" \
+  -F 'column_mapping={"amount":"Amount","date":"Date","note":"Note","category":"Category name","tags":"Labels","type":"Type"}' \
+  -F 'amount_config={"mode":"type_column","income_value":"Income","expense_value":"Expense"}' \
+  -F 'filters=[{"column":"Wallet","operator":"equals","value":"Main"}]'
 ```
 
-### Common Pitfalls & How to Avoid Them
+### Write Python Tests
 
-1. **Forgetting to add imports**
-   ```python
-   from django.utils import timezone  # For timezone.now
-   from django.db import transaction  # For transaction.atomic()
-   from decimal import Decimal  # For money calculations
-   ```
+**File**: `backend/wallets/tests/test_csv_import.py`
 
-2. **Not handling file encoding**
-   - Always use `decode('utf-8-sig')` to handle UTF-8-BOM
-   - Remember to `seek(0)` if reading file multiple times
+```python
+"""
+Tests for CSV import functionality.
 
-3. **Forgetting to reset file pointer**
-   ```python
-   csv_file.seek(0)  # Reset to beginning after validation
-   ```
+DRF LEARNING NOTE: Testing
+==========================
+DRF provides APITestCase with useful methods:
+- self.client.post(url, data, format='multipart')
+- self.client.credentials(HTTP_AUTHORIZATION='Bearer ...')
 
-4. **Using float for money**
-   - DON'T: `amount = float(amount_str)`  # Floating point errors!
-   - DO: `amount = Decimal(amount_str)`   # Exact decimal representation
+📚 Docs: https://www.django-rest-framework.org/api-guide/testing/
+"""
+from decimal import Decimal
+from io import BytesIO
 
-5. **Not using atomic transactions**
-   - If bulk_create fails halfway, you could have partial imports
-   - ALWAYS wrap in `with transaction.atomic():`
+from django.contrib.auth.models import User
+from rest_framework.test import APITestCase
+from rest_framework import status
 
-6. **Forgetting timezone awareness**
-   ```python
-   # BAD: naive datetime (no timezone)
-   dt = datetime(2024, 11, 12, 19, 27, 47)
+from wallets.models import Wallet, Transaction
 
-   # GOOD: timezone-aware
-   from django.utils import timezone
-   dt = timezone.now()  # Current time with timezone
-   dt = timezone.make_aware(naive_dt)  # Convert naive to aware
-   ```
 
-### Learning Resources
+class CSVImportTests(APITestCase):
+    def setUp(self):
+        """Set up test data."""
+        self.user = User.objects.create_user('testuser', 'test@example.com', 'password')
+        self.wallet = Wallet.objects.create(
+            name='Test Wallet',
+            user=self.user,
+            initial_value=Decimal('1000.00'),
+            currency='pln'
+        )
+        # Authenticate
+        self.client.force_authenticate(user=self.user)
 
-**Django Documentation:**
-- Models: https://docs.djangoproject.com/en/stable/topics/db/models/
-- Migrations: https://docs.djangoproject.com/en/stable/topics/migrations/
-- Query API: https://docs.djangoproject.com/en/stable/topics/db/queries/
+    def test_parse_csv_returns_columns(self):
+        """Test that parse endpoint returns CSV columns."""
+        csv_content = b"Date,Amount,Note\n2024-01-01,100,Test"
+        csv_file = BytesIO(csv_content)
+        csv_file.name = 'test.csv'
 
-**DRF Documentation:**
-- Views: https://www.django-rest-framework.org/api-guide/views/
-- Serializers: https://www.django-rest-framework.org/api-guide/serializers/
-- File upload: https://www.django-rest-framework.org/api-guide/parsers/#fileuploadparser
+        response = self.client.post(
+            f'/api/wallets/{self.wallet.id}/import/parse/',
+            {'file': csv_file},
+            format='multipart'
+        )
 
-**Python CSV:**
-- csv module: https://docs.python.org/3/library/csv.html
-- Encoding: https://docs.python.org/3/library/codecs.html
+        self.assertEqual(response.status_code, status.HTTP_200_OK)
+        self.assertEqual(response.data['columns'], ['Date', 'Amount', 'Note'])
+        self.assertEqual(response.data['total_rows'], 1)
 
-### Pro Tips
+    def test_execute_creates_transactions(self):
+        """Test that execute endpoint creates transactions."""
+        csv_content = b"Date,Amount,Note\n2024-01-01,100.50,Test transaction"
+        csv_file = BytesIO(csv_content)
+        csv_file.name = 'test.csv'
 
-1. **Use Django Debug Toolbar** for development
-   ```bash
-   pip install django-debug-toolbar
-   ```
-   Shows SQL queries, helps optimize performance
+        response = self.client.post(
+            f'/api/wallets/{self.wallet.id}/import/execute/',
+            {
+                'file': csv_file,
+                'column_mapping': '{"amount": "Amount", "date": "Date", "note": "Note"}',
+                'amount_config': '{"mode": "always_expense"}',
+                'filters': '[]'
+            },
+            format='multipart'
+        )
 
-2. **Use Django shell for quick testing**
-   ```bash
-   python manage.py shell
-   ```
-   Test your functions interactively
+        self.assertEqual(response.status_code, status.HTTP_200_OK)
+        self.assertEqual(response.data['stats']['imported'], 1)
 
-3. **Create sample data with factories**
-   ```bash
-   pip install factory-boy
-   ```
-   Generate test data easily
+        # Verify transaction created
+        txn = Transaction.objects.get(wallet=self.wallet)
+        self.assertEqual(txn.amount, Decimal('-100.50'))  # Negative (expense)
+        self.assertEqual(txn.note, 'Test transaction')
+```
 
-4. **Use pytest for better testing**
-   ```bash
-   pip install pytest pytest-django
-   pytest wallets/tests.py -v
-   ```
+---
 
-5. **Profile slow imports**
-   ```python
-   import time
-   start = time.time()
-   # ... your import code ...
-   print(f"Import took {time.time() - start:.2f} seconds")
-   ```
+## Checklist
 
-## Next Steps - Your Implementation Journey
+### Backend
+- [x] Transaction.date uses `default=timezone.now` (already done)
+- [ ] Create `backend/wallets/services.py`
+- [ ] Add serializers to `backend/wallets/serializers.py`
+- [ ] Add views to `backend/wallets/views.py`
+- [ ] Add URLs to `backend/wallets/urls.py`
+- [ ] Test with cURL
+- [ ] Write unit tests
 
-1. ✅ **Start with Phase 1** - Get comfortable with Django models
-2. ✅ **Test each phase** - Don't move forward until tests pass
-3. ✅ **Read the docs** - When stuck, check Django/DRF documentation
-4. ✅ **Ask questions** - Comment your code with questions, look up answers
-5. ✅ **Iterate** - First make it work, then make it better
+### UI (Future)
+- [ ] Import modal/page
+- [ ] File upload component
+- [ ] Column mapping dropdowns
+- [ ] Amount mode selection
+- [ ] Filter builder
+- [ ] Results display
 
-## Expected Deliverables
+---
 
-1. ✅ Working CSV import endpoint
-2. ✅ Labels/tags feature for transactions
-3. ✅ Historical date support for imported transactions
-4. ✅ Automatic category creation during import
-5. ✅ Duplicate detection and reporting
-6. ✅ Comprehensive error handling and validation
-7. ✅ Security hardening for file uploads
-8. ✅ Test coverage for all new functionality
-9. ✅ Understanding of DRF patterns and best practices
-10. ✅ Hands-on experience with Django ORM and migrations
+## Further Reading
 
-Good luck with your implementation! Remember: learning comes from struggling a bit, so don't worry if it takes time. Each error message teaches you something new!
+### DRF Documentation
+- [Tutorial](https://www.django-rest-framework.org/tutorial/1-serialization/) - Start here
+- [Serializers](https://www.django-rest-framework.org/api-guide/serializers/)
+- [Views](https://www.django-rest-framework.org/api-guide/views/)
+- [Requests](https://www.django-rest-framework.org/api-guide/requests/)
+- [Responses](https://www.django-rest-framework.org/api-guide/responses/)
+- [Validation](https://www.django-rest-framework.org/api-guide/serializers/#validation)
+- [Status Codes](https://www.django-rest-framework.org/api-guide/status-codes/)
+- [Testing](https://www.django-rest-framework.org/api-guide/testing/)
+
+### Django Documentation
+- [File Uploads](https://docs.djangoproject.com/en/stable/ref/files/uploads/)
+- [QuerySets](https://docs.djangoproject.com/en/stable/ref/models/querysets/)
+- [Transactions](https://docs.djangoproject.com/en/stable/topics/db/transactions/)
+- [Timezones](https://docs.djangoproject.com/en/stable/topics/i18n/timezones/)
+
+### Python Documentation
+- [csv module](https://docs.python.org/3/library/csv.html)
+- [decimal module](https://docs.python.org/3/library/decimal.html)
+- [datetime](https://docs.python.org/3/library/datetime.html)

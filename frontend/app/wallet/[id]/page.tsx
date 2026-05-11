@@ -5,13 +5,14 @@ import ProtectedRoute from "@/components/ProtectedRoute";
 import { Button } from "@/components/ui/button";
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/components/ui/card";
 import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from "@/components/ui/table";
-import { ArrowLeft, Plus, Edit, Trash2, TrendingUp, TrendingDown } from "lucide-react";
+import { ArrowLeft, Plus, Edit, Trash2, TrendingUp, TrendingDown, Upload } from "lucide-react";
 import { DynamicIcon } from "@/components/IconPicker";
 import { UserMenu } from "@/components/UserMenu";
 import { useParams, useRouter, useSearchParams } from "next/navigation";
 import { useEffect, useState } from "react";
 import { Wallet, Transaction, Category, Tag } from "@/models/wallets";
 import { TransactionDialog } from "@/components/TransactionDialog";
+import { CSVImportDialog } from "@/components/CSVImportDialog";
 import MonthSelector from "@/components/MonthSelector";
 
 export default function WalletPage() {
@@ -23,6 +24,7 @@ export default function WalletPage() {
   const [dialogOpen, setDialogOpen] = useState<boolean>(false);
   const [editingTransaction, setEditingTransaction] = useState<Transaction | null>(null);
   const [keepDialogOpen, setKeepDialogOpen] = useState<boolean>(false);
+  const [importDialogOpen, setImportDialogOpen] = useState<boolean>(false);
   const router = useRouter();
   const params = useParams<{ id: string }>();
   const searchParams = useSearchParams();
@@ -124,6 +126,16 @@ export default function WalletPage() {
   async function handleTransactionSaved() {
     // Only refresh data - dialog controls its own closing
     await loadData();
+  }
+
+  function handleImportDialogClose() {
+    setImportDialogOpen(false);
+  }
+
+  async function handleImportComplete() {
+    await loadData();
+    fetchCategories();
+    fetchTags();
   }
 
   if (isLoading) {
@@ -239,10 +251,16 @@ export default function WalletPage() {
                     Manage your income and expenses
                   </CardDescription>
                 </div>
-                <Button onClick={handleAddTransaction}>
-                  <Plus className="mr-2 h-4 w-4" />
-                  Add Transaction
-                </Button>
+                <div className="flex gap-2">
+                  <Button variant="outline" onClick={() => setImportDialogOpen(true)}>
+                    <Upload className="mr-2 h-4 w-4" />
+                    Import CSV
+                  </Button>
+                  <Button onClick={handleAddTransaction}>
+                    <Plus className="mr-2 h-4 w-4" />
+                    Add Transaction
+                  </Button>
+                </div>
               </div>
             </CardHeader>
             <CardContent>
@@ -373,6 +391,14 @@ export default function WalletPage() {
         currency={wallet.currency}
         keepOpen={keepDialogOpen}
         onKeepOpenChange={setKeepDialogOpen}
+      />
+
+      <CSVImportDialog
+        open={importDialogOpen}
+        onOpenChange={setImportDialogOpen}
+        onClose={handleImportDialogClose}
+        onImported={handleImportComplete}
+        walletId={params.id}
       />
     </ProtectedRoute>
   );

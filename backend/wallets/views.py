@@ -4,7 +4,15 @@ from rest_framework import generics
 from rest_framework.permissions import IsAuthenticated
 from rest_framework_simplejwt.authentication import JWTAuthentication
 from .models import Transaction, UserTransactionTag, Wallet, TransactionCategory
-from .serializers import TagSerializer, TransactionSerializer, WalletSerializer, CategorySerializer
+from .serializers import (
+    TagSerializer, TransactionSerializer, WalletSerializer, CategorySerializer,
+    CSVParseSerializer, CSVExecuteSerializer
+)
+from rest_framework.views import APIView
+from rest_framework.response import Response
+from rest_framework import status
+from .services import GenericCSVImportService
+import json
 
 
 class WalletDetail(generics.RetrieveUpdateDestroyAPIView):
@@ -441,3 +449,90 @@ class UserCategoryDetail(generics.RetrieveUpdateDestroyAPIView):
         """
         instance.is_archived = True
         instance.save()
+
+
+class CSVParseView(APIView):
+    """
+    Parse a CSV file and return column information for mapping.
+
+    POST /api/wallets/{wallet_id}/import/parse/
+
+    This is Step 1 of CSV import - analyzes the CSV and returns:
+    - Column names
+    - Sample rows
+    - Unique values per column (for filter dropdowns)
+    """
+    permission_classes = [IsAuthenticated]
+    authentication_classes = [JWTAuthentication]
+
+    def post(self, request, wallet_id):
+        wallet = get_object_or_404(Wallet, id=wallet_id, user=request.user)
+
+        serializer = CSVParseSerializer(data=request.data)
+        if not serializer.is_valid():
+            return Response(serializer.errors, status=status.HTTP_400_BAD_REQUEST)
+
+        csv_file = serializer.validated_data['file']
+        service = GenericCSVImportService(request.user, wallet, csv_file)
+
+        try:
+            result = service.parse()
+            return Response(result)
+        except Exception as e:
+            return Response(
+                {"success": False, "error": str(e)},
+                status=status.HTTP_400_BAD_REQUEST
+            )
+
+
+class CSVExecuteView(APIView):
+    """
+    Execute CSV import with the provided column mapping and configuration.
+
+    POST /api/wallets/{wallet_id}/import/execute/
+
+    This is Step 2 of CSV import - imports transactions using the mapping
+    provided by the user after reviewing the parse results.
+    """
+    permission_classes = [IsAuthenticated]
+    authentication_classes = [JWTAuthentication]
+
+    def post(self, request, wallet_id):
+        wallet = get_object_or_404(Wallet, id=wallet_id, user=request.user)
+
+        # Parse JSON fields from FormData (they come as strings)
+        # Create a regular dict from request.data
+        data = {
+            'file': request.data.get('file')
+        }
+
+        try:
+            # Parse JSON strings to Python objects
+            if 'column_mapping' in request.data:
+                data['column_mapping'] = json.loads(request.data['column_mapping'])
+            if 'amount_config' in request.data:
+                data['amount_config'] = json.loads(request.data['amount_config'])
+            if 'filters' in request.data:
+                data['filters'] = json.loads(request.data['filters'])
+        except json.JSONDecodeError as e:
+            return Response(
+                {"error": f"Invalid JSON in request: {str(e)}"},
+                status=status.HTTP_400_BAD_REQUEST
+            )
+
+        serializer = CSVExecuteSerializer(data=data)
+        if not serializer.is_valid():
+            return Response(serializer.errors, status=status.HTTP_400_BAD_REQUEST)
+
+        csv_file = serializer.validated_data['file']
+        column_mapping = serializer.validated_data['column_mapping']
+        amount_config = serializer.validated_data['amount_config']
+        filters = serializer.validated_data.get('filters', [])
+
+        service = GenericCSVImportService(request.user, wallet, csv_file)
+        result = service.execute(column_mapping, amount_config, filters)
+
+        if result.get('success'):
+            return Response(result)
+        else:
+            return Response(result, status=status.HTTP_400_BAD_REQUEST)

@@ -72,3 +72,54 @@ export interface TagFormData {
     color?: string;
     is_visible?: boolean;
 }
+
+// CSV Import types
+export interface CSVParseResponse {
+    success: boolean;
+    columns: string[];
+    sample_rows: Record<string, string>[];
+    total_rows: number;
+    unique_values: Record<string, string[]>;
+    error?: string;
+}
+
+export interface CSVColumnMapping {
+    amount: string;
+    date: string;
+    note?: string;
+    category?: string;
+    tags?: string;
+    type?: string;
+    currency?: string;
+}
+
+export type AmountMode = 'signed' | 'type_column' | 'always_expense' | 'always_income';
+
+export interface AmountConfig {
+    mode: AmountMode;
+    income_value?: string;
+    expense_value?: string;
+}
+
+export type FilterOperator = 'equals' | 'not_equals' | 'contains' | 'not_contains';
+
+export interface FilterRule {
+    column: string;
+    operator: FilterOperator;
+    value: string;
+}
+
+export interface CSVExecuteResponse {
+    success: boolean;
+    stats: {
+        total_rows: number;
+        imported: number;
+        skipped_filtered: number;
+        skipped_duplicates: number;
+        errors: number;
+    };
+    created_categories: string[];
+    created_tags: string[];
+    errors: Array<{ row: number; error: string }>;
+    error?: string;
+}

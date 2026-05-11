@@ -262,5 +262,101 @@ class WalletSerializer(serializers.ModelSerializer):
         """
         transactions = Transaction.objects.filter(wallet=obj)
         total = transactions.aggregate(Sum('amount'))['amount__sum'] or 0
-        
+
         return obj.initial_value + total
+
+
+class CSVParseSerializer(serializers.Serializer):
+    """
+    Serializer for CSV file upload during the parse step.
+
+    Validates that the uploaded file:
+    - Is a CSV file (by extension)
+    - Does not exceed 5MB in size
+    """
+    file = serializers.FileField()
+
+    def validate_file(self, value):
+        """Validate file is CSV and under 5MB."""
+        if not value.name.endswith('.csv'):
+            raise serializers.ValidationError("File must be a CSV file.")
+
+        max_size = 5 * 1024 * 1024  # 5MB
+        if value.size > max_size:
+            raise serializers.ValidationError("File size must not exceed 5MB.")
+
+        return value
+
+
+class FilterRuleSerializer(serializers.Serializer):
+    """
+    Serializer for a single filter rule used during CSV import.
+
+    Filter rules allow users to include/exclude rows based on column values.
+    """
+    column = serializers.CharField()
+    operator = serializers.ChoiceField(choices=[
+        ('equals', 'Equals'),
+        ('not_equals', 'Not Equals'),
+        ('contains', 'Contains'),
+        ('not_contains', 'Not Contains'),
+    ])
+    value = serializers.CharField(allow_blank=True)
+
+
+class AmountConfigSerializer(serializers.Serializer):
+    """
+    Serializer for amount configuration during CSV import.
+
+    Determines how to interpret the amount column:
+    - signed: Amount already has +/- sign
+    - type_column: Separate column indicates income/expense
+    - always_expense: All rows are expenses
+    - always_income: All rows are income
+    """
+    mode = serializers.ChoiceField(choices=[
+        ('signed', 'Signed'),
+        ('type_column', 'Type Column'),
+        ('always_expense', 'Always Expense'),
+        ('always_income', 'Always Income'),
+    ])
+    income_value = serializers.CharField(required=False, allow_blank=True)
+    expense_value = serializers.CharField(required=False, allow_blank=True)
+
+
+class CSVExecuteSerializer(serializers.Serializer):
+    """
+    Serializer for executing the CSV import.
+
+    Contains all configuration needed to import transactions:
+    - file: The CSV file to import
+    - column_mapping: Maps transaction fields to CSV columns
+    - amount_config: How to interpret amounts
+    - filters: Optional row filters
+    """
+    file = serializers.FileField()
+    column_mapping = serializers.DictField(
+        child=serializers.CharField(allow_blank=True),
+        help_text="Maps transaction fields (amount, date, note, etc.) to CSV column names"
+    )
+    amount_config = AmountConfigSerializer()
+    filters = FilterRuleSerializer(many=True, required=False, default=list)
+
+    def validate_file(self, value):
+        """Validate file is CSV and under 5MB."""
+        if not value.name.endswith('.csv'):
+            raise serializers.ValidationError("File must be a CSV file.")
+
+        max_size = 5 * 1024 * 1024  # 5MB
+        if value.size > max_size:
+            raise serializers.ValidationError("File size must not exceed 5MB.")
+
+        return value
+
+    def validate_column_mapping(self, value):
+        """Validate required fields are mapped."""
+        if 'amount' not in value or not value['amount']:
+            raise serializers.ValidationError("'amount' mapping is required.")
+        if 'date' not in value or not value['date']:
+            raise serializers.ValidationError("'date' mapping is required.")
+        return value

@@ -5,6 +5,7 @@ from .views import (
     UserCategoryList, UserCategoryDetail,
     UserTagList, UserTagDetail,
     TransactionDetail, TransactionCreate,
+    CSVParseView, CSVExecuteView,
 )
 
 urlpatterns = [
@@ -28,4 +29,8 @@ urlpatterns = [
     # Direct transaction routes
     path('transactions/', TransactionCreate.as_view(), name='transaction-create'),
     path('transactions/<uuid:pk>/', TransactionDetail.as_view(), name='transaction-detail'),
+
+    # CSV import routes
+    path('<uuid:wallet_id>/import/parse/', CSVParseView.as_view(), name='csv-import-parse'),
+    path('<uuid:wallet_id>/import/execute/', CSVExecuteView.as_view(), name='csv-import-execute'),
 ]
