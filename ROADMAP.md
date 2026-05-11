@@ -11,6 +11,7 @@
 | CSV import | Two-step: parse → execute. Generic column mapper. |
 | Dashboards | Main dashboard (`UserDashboard` + `GET /api/dashboard/`) with summary cards, monthly trend chart, category breakdown, wallet list. Per-wallet metrics page (`WalletMetrics` + `GET /api/wallets/{id}/metrics/`) with lifetime stats, monthly breakdown, recent transactions. |
 | Currency symbol rendering | `formatCurrency` utility; wallet pages show correct symbol/code per currency (USD `$`, EUR `€`, GBP `£`, PLN `PLN`); dashboard aggregates show no symbol (mixed currencies). |
+| Recurring Transactions | `RecurringTransaction` + `RecurringTransactionExecution` models. Six frequencies (daily/weekly/biweekly/monthly/quarterly/yearly). `process_recurring` management command with catch-up (creates all missed occurrences) and `--dry-run`/`--force-date` flags. "Make this recurring" toggle in `TransactionDialog`. Settings page refactored to tabs with new Recurring tab (list, toggle active, edit schedule, view execution history, delete). API: `GET /api/wallets/recurring/`, `GET/POST /api/wallets/{id}/recurring/`, `GET/PATCH/DELETE /api/wallets/{id}/recurring/{id}/`, `GET /api/wallets/{id}/recurring/{id}/executions/`. |
 
 ---
 
@@ -19,8 +20,8 @@
 | # | Feature | Priority | Complexity | Why this order |
 |---|---|---|---|---|
 | ~~1~~ | ~~Dashboards~~ | — | — | ✅ Done |
-| 1 | Recurring Transactions | 4 | 4 | Self-contained new model. Doesn't block anything else. |
-| 2 | Search & Filters + Pagination | 4 | 3 | Improves usability before data grows. |
+| ~~1~~ | ~~Recurring Transactions~~ | — | — | ✅ Done |
+| 1 | Search & Filters + Pagination | 4 | 3 | Improves usability before data grows. |
 | 3 | Exchange Rates | 3 | 4 | Enables meaningful cross-currency dashboard totals and transactions in a foreign currency. |
 | 4 | Budgeting Limits | 2 | 3 | Needs dashboard aggregation patterns established first. |
 | 5 | CSV Export | 3 | 2 | Quick win, low risk, natural complement to CSV import. |

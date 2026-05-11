@@ -2,7 +2,7 @@
 
 import { useState, useEffect, FormEvent } from "react";
 import { axiosInstance } from "@/api/axiosInstance";
-import { Transaction, Category, Tag, Currency, TransactionFormData } from "@/models/wallets";
+import { Transaction, Category, Tag, Currency, TransactionFormData, RecurringFrequency } from "@/models/wallets";
 import {
   Dialog,
   DialogContent,
@@ -103,6 +103,13 @@ export function TransactionDialog({
   const [newTagName, setNewTagName] = useState("");
   const [isCreatingTag, setIsCreatingTag] = useState(false);
   const [createTagError, setCreateTagError] = useState("");
+
+  // Recurring state (create mode only)
+  const [isRecurring, setIsRecurring] = useState(false);
+  const [recurringFrequency, setRecurringFrequency] = useState<RecurringFrequency>("monthly");
+  const [recurringDayOfWeek, setRecurringDayOfWeek] = useState<number>(1);
+  const [recurringDayOfMonth, setRecurringDayOfMonth] = useState<number>(1);
+  const [recurringEndDate, setRecurringEndDate] = useState<string>("");
 
   // Filter to only show visible categories in dropdown
   // BUT still show the transaction's current category even if hidden
@@ -268,6 +275,11 @@ export function TransactionDialog({
       setFieldErrors({});
       setCategorySearch("");
       setTagSearch("");
+      setIsRecurring(false);
+      setRecurringFrequency("monthly");
+      setRecurringDayOfWeek(1);
+      setRecurringDayOfMonth(1);
+      setRecurringEndDate("");
     }
   }, [transaction, currency, open]);
 
@@ -332,19 +344,35 @@ export function TransactionDialog({
         onClose();
       } else {
         await axiosInstance.post("transactions/", payload);
+
+        if (isRecurring) {
+          await axiosInstance.post(`wallets/${walletId}/recurring/`, {
+            note: formData.note,
+            amount: signedAmount,
+            currency: formData.currency,
+            category_id: formData.category,
+            tag_ids: formData.tag_ids,
+            frequency: recurringFrequency,
+            start_date: formData.date,
+            end_date: recurringEndDate || null,
+            day_of_week: recurringFrequency === "weekly" ? recurringDayOfWeek : null,
+            day_of_month: recurringFrequency === "monthly" ? recurringDayOfMonth : null,
+            is_active: true,
+          });
+        }
+
         onSaved();
 
         if (keepOpen) {
-          // Reset form for next entry, keep dialog open
           setFormData({
             note: "",
             amount: 0,
             currency: currency,
             date: new Date().toISOString().split("T")[0],
-            category: formData.category, // Keep category for convenience
-            tag_ids: formData.tag_ids, // Keep tags for convenience
+            category: formData.category,
+            tag_ids: formData.tag_ids,
           });
-          // Don't close - user can continue adding
+          setIsRecurring(false);
         } else {
           onClose();
         }
@@ -668,6 +696,93 @@ export function TransactionDialog({
               <p className="text-sm text-red-600">{fieldErrors.note}</p>
             )}
           </div>
+
+          {!transaction && (
+            <div className="space-y-3 pt-2 border-t">
+              <div className="flex items-center gap-2">
+                <Switch
+                  id="make-recurring"
+                  checked={isRecurring}
+                  onCheckedChange={setIsRecurring}
+                />
+                <Label htmlFor="make-recurring" className="text-sm cursor-pointer">
+                  Make this recurring
+                </Label>
+              </div>
+              {isRecurring && (
+                <div className="rounded-lg border bg-muted/40 p-4 space-y-3">
+                  <div className="space-y-1">
+                    <Label className="text-xs text-muted-foreground">Frequency</Label>
+                    <Select
+                      value={recurringFrequency}
+                      onValueChange={(v) => setRecurringFrequency(v as RecurringFrequency)}
+                    >
+                      <SelectTrigger>
+                        <SelectValue />
+                      </SelectTrigger>
+                      <SelectContent>
+                        <SelectItem value="daily">Daily</SelectItem>
+                        <SelectItem value="weekly">Weekly</SelectItem>
+                        <SelectItem value="biweekly">Every 2 weeks</SelectItem>
+                        <SelectItem value="monthly">Monthly</SelectItem>
+                        <SelectItem value="quarterly">Quarterly</SelectItem>
+                        <SelectItem value="yearly">Yearly</SelectItem>
+                      </SelectContent>
+                    </Select>
+                  </div>
+                  {recurringFrequency === "weekly" && (
+                    <div className="space-y-1">
+                      <Label className="text-xs text-muted-foreground">Day of week</Label>
+                      <Select
+                        value={String(recurringDayOfWeek)}
+                        onValueChange={(v) => setRecurringDayOfWeek(Number(v))}
+                      >
+                        <SelectTrigger>
+                          <SelectValue />
+                        </SelectTrigger>
+                        <SelectContent>
+                          <SelectItem value="0">Monday</SelectItem>
+                          <SelectItem value="1">Tuesday</SelectItem>
+                          <SelectItem value="2">Wednesday</SelectItem>
+                          <SelectItem value="3">Thursday</SelectItem>
+                          <SelectItem value="4">Friday</SelectItem>
+                          <SelectItem value="5">Saturday</SelectItem>
+                          <SelectItem value="6">Sunday</SelectItem>
+                        </SelectContent>
+                      </Select>
+                    </div>
+                  )}
+                  {recurringFrequency === "monthly" && (
+                    <div className="space-y-1">
+                      <Label className="text-xs text-muted-foreground">Day of month</Label>
+                      <Select
+                        value={String(recurringDayOfMonth)}
+                        onValueChange={(v) => setRecurringDayOfMonth(Number(v))}
+                      >
+                        <SelectTrigger>
+                          <SelectValue />
+                        </SelectTrigger>
+                        <SelectContent>
+                          {Array.from({ length: 31 }, (_, i) => i + 1).map((d) => (
+                            <SelectItem key={d} value={String(d)}>{d}</SelectItem>
+                          ))}
+                          <SelectItem value="-1">Last day of month</SelectItem>
+                        </SelectContent>
+                      </Select>
+                    </div>
+                  )}
+                  <div className="space-y-1">
+                    <Label className="text-xs text-muted-foreground">End date (optional)</Label>
+                    <Input
+                      type="date"
+                      value={recurringEndDate}
+                      onChange={(e) => setRecurringEndDate(e.target.value)}
+                    />
+                  </div>
+                </div>
+              )}
+            </div>
+          )}
 
           {error && (
             <div className="text-sm text-red-600 bg-red-50 p-3 rounded-md">

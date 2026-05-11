@@ -6,11 +6,12 @@ from django.shortcuts import get_object_or_404
 from rest_framework import generics
 from rest_framework.permissions import IsAuthenticated
 from rest_framework_simplejwt.authentication import JWTAuthentication
-from .models import Transaction, UserTransactionTag, Wallet, TransactionCategory
+from .models import Transaction, UserTransactionTag, Wallet, TransactionCategory, RecurringTransaction, RecurringTransactionExecution
 from .serializers import (
     TagSerializer, TransactionSerializer, WalletSerializer, CategorySerializer,
     CSVParseSerializer, CSVExecuteSerializer,
     UserDashboardSerializer, WalletDashboardSerializer,
+    RecurringTransactionSerializer, RecurringTransactionExecutionSerializer,
 )
 from rest_framework.views import APIView
 from rest_framework.response import Response
@@ -584,4 +585,78 @@ class WalletMetrics(APIView):
         data = DashboardService(request.user).wallet_summary(wallet)
         return Response(
             WalletDashboardSerializer(data, context={'request': request}).data
+        )
+
+
+class UserRecurringTransactionList(generics.ListAPIView):
+    serializer_class = RecurringTransactionSerializer
+    permission_classes = [IsAuthenticated]
+    authentication_classes = [JWTAuthentication]
+
+    def get_queryset(self):
+        return RecurringTransaction.objects.filter(
+            wallet__user=self.request.user
+        ).select_related("wallet", "category", "created_by").prefetch_related("tags")
+
+
+class WalletRecurringTransactionList(generics.ListCreateAPIView):
+    serializer_class = RecurringTransactionSerializer
+    permission_classes = [IsAuthenticated]
+    authentication_classes = [JWTAuthentication]
+
+    def _get_wallet(self):
+        return get_object_or_404(
+            Wallet, id=self.kwargs["wallet_id"], user=self.request.user
+        )
+
+    def get_queryset(self):
+        return RecurringTransaction.objects.filter(wallet=self._get_wallet())
+
+    def get_serializer_context(self):
+        ctx = super().get_serializer_context()
+        ctx["wallet"] = self._get_wallet()
+        return ctx
+
+    def perform_create(self, serializer):
+        wallet = self._get_wallet()
+        serializer.save(
+            wallet=wallet,
+            created_by=self.request.user,
+            currency=wallet.currency,
+        )
+
+
+class WalletRecurringTransactionDetail(generics.RetrieveUpdateDestroyAPIView):
+    serializer_class = RecurringTransactionSerializer
+    permission_classes = [IsAuthenticated]
+    authentication_classes = [JWTAuthentication]
+
+    def _get_wallet(self):
+        return get_object_or_404(
+            Wallet, id=self.kwargs["wallet_id"], user=self.request.user
+        )
+
+    def get_queryset(self):
+        return RecurringTransaction.objects.filter(wallet=self._get_wallet())
+
+    def get_serializer_context(self):
+        ctx = super().get_serializer_context()
+        ctx["wallet"] = self._get_wallet()
+        return ctx
+
+
+class RecurringTransactionExecutionList(generics.ListAPIView):
+    serializer_class = RecurringTransactionExecutionSerializer
+    permission_classes = [IsAuthenticated]
+    authentication_classes = [JWTAuthentication]
+
+    def get_queryset(self):
+        wallet = get_object_or_404(
+            Wallet, id=self.kwargs["wallet_id"], user=self.request.user
+        )
+        recurring = get_object_or_404(
+            RecurringTransaction, id=self.kwargs["pk"], wallet=wallet
+        )
+        return RecurringTransactionExecution.objects.filter(
+            recurring_transaction=recurring
         )

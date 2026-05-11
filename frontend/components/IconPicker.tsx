@@ -131,7 +131,7 @@ function getIconComponent(
   if (!iconName) return null;
   const pascalName = toPascalCase(iconName);
   const IconComponent = (
-    LucideIcons as Record<
+    LucideIcons as unknown as Record<
       string,
       React.ComponentType<{ className?: string; style?: React.CSSProperties }>
     >

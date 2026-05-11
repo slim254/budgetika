@@ -28,6 +28,8 @@ import { ArrowLeft, Plus, Edit, Trash2, Tags, Eye, EyeOff } from "lucide-react";
 import { Category, Tag } from "@/models/wallets";
 import { IconPicker, DynamicIcon } from "@/components/IconPicker";
 import { ColorPicker } from "@/components/ColorPicker";
+import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
+import { RecurringSettingsSection } from "@/components/RecurringSettingsSection";
 
 export default function SettingsPage() {
   const router = useRouter();
@@ -257,7 +259,14 @@ export default function SettingsPage() {
         </header>
 
         <main className="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8 py-8">
-          <div className="grid gap-6">
+          <Tabs defaultValue="categories">
+            <TabsList className="mb-6">
+              <TabsTrigger value="categories">Categories</TabsTrigger>
+              <TabsTrigger value="tags">Tags</TabsTrigger>
+              <TabsTrigger value="recurring">Recurring</TabsTrigger>
+            </TabsList>
+
+            <TabsContent value="categories">
             {/* Categories Section */}
             <Card>
               <CardHeader>
@@ -370,7 +379,9 @@ export default function SettingsPage() {
                 )}
               </CardContent>
             </Card>
+            </TabsContent>
 
+            <TabsContent value="tags">
             {/* Tags Section */}
             <Card>
               <CardHeader>
@@ -483,7 +494,22 @@ export default function SettingsPage() {
                 )}
               </CardContent>
             </Card>
-          </div>
+            </TabsContent>
+
+            <TabsContent value="recurring">
+              <Card>
+                <CardHeader>
+                  <CardTitle>Recurring Transactions</CardTitle>
+                  <CardDescription>
+                    Templates that auto-generate transactions on a schedule. Create them by toggling &ldquo;Make this recurring&rdquo; when adding a transaction.
+                  </CardDescription>
+                </CardHeader>
+                <CardContent>
+                  <RecurringSettingsSection />
+                </CardContent>
+              </Card>
+            </TabsContent>
+          </Tabs>
         </main>
       </div>
 

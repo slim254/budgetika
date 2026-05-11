@@ -1,5 +1,12 @@
 from rest_framework import serializers
-from .models import Transaction, UserTransactionTag, Wallet, TransactionCategory
+from .models import (
+    Transaction,
+    UserTransactionTag,
+    Wallet,
+    TransactionCategory,
+    RecurringTransaction,
+    RecurringTransactionExecution,
+)
 from django.db.models import Sum
 
 
@@ -422,3 +429,104 @@ class WalletDashboardSerializer(serializers.Serializer):
     metrics = WalletMetricsSerializer()
     category_breakdown = CategorySpendingSerializer(many=True)
     recent_transactions = TransactionSerializer(many=True)
+
+
+class RecurringTransactionSerializer(serializers.ModelSerializer):
+    category = CategorySerializer(read_only=True)
+    tags = TagSerializer(many=True, read_only=True)
+    category_id = serializers.UUIDField(write_only=True, required=False, allow_null=True)
+    tag_ids = serializers.ListField(
+        child=serializers.UUIDField(), write_only=True, required=False, default=list
+    )
+    execution_count = serializers.SerializerMethodField()
+    is_due = serializers.SerializerMethodField()
+    wallet = serializers.PrimaryKeyRelatedField(read_only=True)
+
+    class Meta:
+        model = RecurringTransaction
+        fields = [
+            "id", "wallet", "note", "amount", "currency",
+            "category", "category_id", "tags", "tag_ids",
+            "frequency", "start_date", "end_date",
+            "day_of_week", "day_of_month",
+            "is_active", "next_occurrence", "last_processed",
+            "execution_count", "is_due", "created_at", "updated_at",
+        ]
+        read_only_fields = [
+            "id", "wallet", "next_occurrence", "last_processed",
+            "created_at", "updated_at",
+        ]
+
+    def get_execution_count(self, obj):
+        return obj.executions.count()
+
+    def get_is_due(self, obj):
+        return obj.is_due()
+
+    def validate_category_id(self, value):
+        if value:
+            user = self.context["request"].user
+            if not TransactionCategory.objects.filter(id=value, user=user).exists():
+                raise serializers.ValidationError("Category not found or doesn't belong to you.")
+        return value
+
+    def validate(self, data):
+        start_date = data.get("start_date") or getattr(self.instance, "start_date", None)
+        end_date = data.get("end_date") if "end_date" in data else getattr(self.instance, "end_date", None)
+        if start_date and end_date and end_date < start_date:
+            raise serializers.ValidationError({"end_date": "Must be after start date."})
+
+        frequency = data.get("frequency") or getattr(self.instance, "frequency", None)
+        if frequency == RecurringTransaction.Frequency.WEEKLY:
+            day_of_week = data.get("day_of_week") if "day_of_week" in data else getattr(self.instance, "day_of_week", None)
+            if day_of_week is None:
+                raise serializers.ValidationError({"day_of_week": "Required for weekly frequency."})
+        if frequency == RecurringTransaction.Frequency.MONTHLY:
+            day_of_month = data.get("day_of_month") if "day_of_month" in data else getattr(self.instance, "day_of_month", None)
+            if day_of_month is None:
+                raise serializers.ValidationError({"day_of_month": "Required for monthly frequency."})
+
+        wallet = self.context.get("wallet")
+        currency = data.get("currency")
+        if wallet and currency and currency != wallet.currency:
+            raise serializers.ValidationError(
+                {"currency": f"Must match wallet currency ({wallet.currency})."}
+            )
+        return data
+
+    def create(self, validated_data):
+        category_id = validated_data.pop("category_id", None)
+        tag_ids = validated_data.pop("tag_ids", [])
+        if category_id:
+            validated_data["category"] = TransactionCategory.objects.get(id=category_id)
+        instance = super().create(validated_data)
+        if tag_ids:
+            tags = UserTransactionTag.objects.filter(
+                id__in=tag_ids, user=self.context["request"].user
+            )
+            instance.tags.set(tags)
+        return instance
+
+    def update(self, instance, validated_data):
+        category_id = validated_data.pop("category_id", None)
+        tag_ids = validated_data.pop("tag_ids", None)
+        if category_id:
+            validated_data["category"] = TransactionCategory.objects.get(id=category_id)
+        elif category_id is None and "category_id" in self.initial_data:
+            validated_data["category"] = None
+        instance = super().update(instance, validated_data)
+        if tag_ids is not None:
+            tags = UserTransactionTag.objects.filter(
+                id__in=tag_ids, user=self.context["request"].user
+            )
+            instance.tags.set(tags)
+        return instance
+
+
+class RecurringTransactionExecutionSerializer(serializers.ModelSerializer):
+    transaction = TransactionSerializer(read_only=True)
+
+    class Meta:
+        model = RecurringTransactionExecution
+        fields = ["id", "scheduled_date", "executed_at", "transaction"]
+        read_only_fields = fields

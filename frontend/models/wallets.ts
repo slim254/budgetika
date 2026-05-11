@@ -188,3 +188,54 @@ export interface WalletMetricsResponse {
     category_breakdown: CategorySpending[];
     recent_transactions: Transaction[];
 }
+
+export type RecurringFrequency =
+    | "daily"
+    | "weekly"
+    | "biweekly"
+    | "monthly"
+    | "quarterly"
+    | "yearly";
+
+export interface RecurringTransaction {
+    id: string;
+    wallet: string;
+    note: string;
+    amount: number;
+    currency: Currency;
+    category: Category | null;
+    tags: Tag[];
+    frequency: RecurringFrequency;
+    start_date: string;
+    end_date: string | null;
+    day_of_week: number | null;
+    day_of_month: number | null;
+    is_active: boolean;
+    next_occurrence: string | null;
+    last_processed: string | null;
+    execution_count: number;
+    is_due: boolean;
+    created_at: string;
+    updated_at: string;
+}
+
+export interface RecurringTransactionFormData {
+    note: string;
+    amount: number;
+    currency: Currency;
+    category_id: string | null;
+    tag_ids: string[];
+    frequency: RecurringFrequency;
+    start_date: string;
+    end_date: string | null;
+    day_of_week: number | null;
+    day_of_month: number | null;
+    is_active: boolean;
+}
+
+export interface RecurringExecution {
+    id: string;
+    scheduled_date: string;
+    executed_at: string;
+    transaction: Transaction;
+}

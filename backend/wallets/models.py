@@ -1,7 +1,10 @@
 from django.utils import timezone
 import uuid
+import calendar
+from datetime import date, timedelta, datetime
 from django.db import models
 from django.contrib.auth.models import User
+from dateutil.relativedelta import relativedelta
 
 
 class Wallet(models.Model):
@@ -199,3 +202,113 @@ class Transaction(models.Model):
 
     def __str__(self):
         return self.note
+
+
+class RecurringTransaction(models.Model):
+    class Frequency(models.TextChoices):
+        DAILY     = "daily",     "Daily"
+        WEEKLY    = "weekly",    "Weekly"
+        BIWEEKLY  = "biweekly",  "Every 2 weeks"
+        MONTHLY   = "monthly",   "Monthly"
+        QUARTERLY = "quarterly", "Quarterly"
+        YEARLY    = "yearly",    "Yearly"
+
+    id = models.UUIDField(primary_key=True, default=uuid.uuid4, editable=False)
+    wallet = models.ForeignKey(
+        Wallet, related_name="recurring_transactions", on_delete=models.CASCADE
+    )
+    created_by = models.ForeignKey(
+        User, related_name="recurring_transactions", on_delete=models.CASCADE
+    )
+
+    note = models.CharField(max_length=100)
+    amount = models.DecimalField(max_digits=10, decimal_places=2)
+    currency = models.CharField(
+        max_length=3,
+        choices=[("usd", "usd"), ("eur", "eur"), ("gbp", "gbp"), ("pln", "pln")],
+    )
+    category = models.ForeignKey(
+        "TransactionCategory",
+        related_name="recurring_transactions",
+        on_delete=models.SET_NULL,
+        null=True,
+        blank=True,
+    )
+    tags = models.ManyToManyField(
+        UserTransactionTag, related_name="recurring_transactions", blank=True
+    )
+
+    frequency = models.CharField(
+        max_length=20, choices=Frequency.choices, default=Frequency.MONTHLY
+    )
+    start_date = models.DateField()
+    end_date = models.DateField(null=True, blank=True)
+    day_of_week = models.IntegerField(null=True, blank=True)
+    day_of_month = models.IntegerField(null=True, blank=True)
+
+    is_active = models.BooleanField(default=True)
+    next_occurrence = models.DateField(null=True, blank=True)
+    last_processed = models.DateTimeField(null=True, blank=True)
+
+    created_at = models.DateTimeField(auto_now_add=True)
+    updated_at = models.DateTimeField(auto_now=True)
+
+    class Meta:
+        ordering = ["next_occurrence", "-created_at"]
+
+    def __str__(self):
+        return f"{self.note} ({self.frequency})"
+
+    def save(self, *args, **kwargs):
+        if not self.next_occurrence and self.start_date:
+            self.next_occurrence = self.start_date
+        super().save(*args, **kwargs)
+
+    def calculate_next_occurrence(self, from_date=None):
+        base = from_date or date.today()
+
+        if self.frequency == self.Frequency.DAILY:
+            return base + timedelta(days=1)
+        if self.frequency == self.Frequency.WEEKLY:
+            days_ahead = (self.day_of_week - base.weekday()) % 7
+            if days_ahead == 0:
+                days_ahead = 7
+            return base + timedelta(days=days_ahead)
+        if self.frequency == self.Frequency.BIWEEKLY:
+            return base + timedelta(weeks=2)
+        if self.frequency == self.Frequency.MONTHLY:
+            next_month = base + relativedelta(months=1)
+            last_day = calendar.monthrange(next_month.year, next_month.month)[1]
+            target_day = last_day if self.day_of_month == -1 else min(self.day_of_month, last_day)
+            return next_month.replace(day=target_day)
+        if self.frequency == self.Frequency.QUARTERLY:
+            return base + relativedelta(months=3)
+        if self.frequency == self.Frequency.YEARLY:
+            return base + relativedelta(years=1)
+        return None
+
+    def is_due(self, today=None):
+        today = today or date.today()
+        if not self.is_active:
+            return False
+        if self.end_date and today > self.end_date:
+            return False
+        return bool(self.next_occurrence and self.next_occurrence <= today)
+
+
+class RecurringTransactionExecution(models.Model):
+    id = models.UUIDField(primary_key=True, default=uuid.uuid4, editable=False)
+    recurring_transaction = models.ForeignKey(
+        RecurringTransaction,
+        related_name="executions",
+        on_delete=models.CASCADE,
+    )
+    transaction = models.ForeignKey(
+        Transaction, related_name="recurring_source", on_delete=models.CASCADE
+    )
+    scheduled_date = models.DateField()
+    executed_at = models.DateTimeField(auto_now_add=True)
+
+    class Meta:
+        ordering = ["-executed_at"]
+        unique_together = [["recurring_transaction", "scheduled_date"]]

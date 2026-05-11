@@ -7,6 +7,9 @@ from .views import (
     TransactionDetail, TransactionCreate,
     CSVParseView, CSVExecuteView,
     WalletMetrics,
+    UserRecurringTransactionList,
+    WalletRecurringTransactionList, WalletRecurringTransactionDetail,
+    RecurringTransactionExecutionList,
 )
 
 urlpatterns = [
@@ -22,8 +25,6 @@ urlpatterns = [
     path('<uuid:wallet_id>/metrics/', WalletMetrics.as_view(), name='wallet-metrics'),
 
     # Category routes (NOT nested - user-scoped)
-    # BEFORE: path('<uuid:wallet_id>/categories/', ...)
-    # AFTER:
     path('categories/', UserCategoryList.as_view(), name='category-list'),
     path('categories/<uuid:pk>/', UserCategoryDetail.as_view(), name='category-detail'),
 
@@ -37,4 +38,10 @@ urlpatterns = [
     # CSV import routes
     path('<uuid:wallet_id>/import/parse/', CSVParseView.as_view(), name='csv-import-parse'),
     path('<uuid:wallet_id>/import/execute/', CSVExecuteView.as_view(), name='csv-import-execute'),
+
+    # Recurring transaction routes
+    path('recurring/', UserRecurringTransactionList.as_view(), name='user-recurring-list'),
+    path('<uuid:wallet_id>/recurring/', WalletRecurringTransactionList.as_view(), name='wallet-recurring-list'),
+    path('<uuid:wallet_id>/recurring/<uuid:pk>/', WalletRecurringTransactionDetail.as_view(), name='wallet-recurring-detail'),
+    path('<uuid:wallet_id>/recurring/<uuid:pk>/executions/', RecurringTransactionExecutionList.as_view(), name='wallet-recurring-executions'),
 ]
