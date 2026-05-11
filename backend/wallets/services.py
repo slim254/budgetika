@@ -1,7 +1,10 @@
 from collections import defaultdict
+from decimal import Decimal
 import csv
 import datetime
 from django.db import transaction
+from django.db.models import Sum, Count, Q, Avg, Min, Max, DecimalField, F
+from django.db.models.functions import Coalesce, TruncMonth
 from django.utils import timezone
 
 
@@ -421,3 +424,267 @@ class GenericCSVImportService:
                     return False
 
         return True
+
+
+class DashboardService:
+    """
+    Aggregation logic for user and per-wallet dashboards.
+
+    Plain Python service (no DRF deps) so it can also be called from
+    management commands or tests. Mirrors the pattern used by
+    GenericCSVImportService above.
+    """
+
+    UNCATEGORIZED_NAME = "Uncategorized"
+    UNCATEGORIZED_ICON = "circle"
+    UNCATEGORIZED_COLOR = "#6B7280"
+
+    def __init__(self, user):
+        self.user = user
+        self.now = timezone.now()
+
+    def user_summary(self):
+        wallets_qs = self._wallets_with_monthly_aggregates()
+
+        wallet_data = []
+        total_balance = Decimal("0")
+        total_income = Decimal("0")
+        total_expenses = Decimal("0")
+
+        for wallet in wallets_qs:
+            balance = wallet.initial_value + wallet.total_transactions
+            income = wallet.income_this_month
+            expenses = abs(wallet.expenses_this_month)
+            total_balance += balance
+            total_income += income
+            total_expenses += expenses
+            wallet_data.append({
+                "id": wallet.id,
+                "name": wallet.name,
+                "currency": wallet.currency,
+                "balance": balance,
+                "income_this_month": income,
+                "expenses_this_month": expenses,
+            })
+
+        category_qs = Transaction.objects.filter(
+            wallet__user=self.user,
+            amount__lt=0,
+            date__month=self.now.month,
+            date__year=self.now.year,
+        )
+        spending_by_category = self._category_spending(category_qs, total_expenses)
+
+        return {
+            "summary": {
+                "total_balance": total_balance,
+                "total_income_this_month": total_income,
+                "total_expenses_this_month": total_expenses,
+                "net_this_month": total_income - total_expenses,
+            },
+            "wallets": wallet_data,
+            "spending_by_category": spending_by_category,
+            "monthly_trend": self._monthly_trend(),
+        }
+
+    def wallet_summary(self, wallet):
+        aggregates = Transaction.objects.filter(wallet=wallet).aggregate(
+            total_transactions=Count("id"),
+            income_count=Count("id", filter=Q(amount__gt=0)),
+            expense_count=Count("id", filter=Q(amount__lt=0)),
+            income_this_month=Coalesce(
+                Sum("amount", filter=Q(
+                    amount__gt=0,
+                    date__month=self.now.month,
+                    date__year=self.now.year,
+                )),
+                Decimal("0"),
+                output_field=DecimalField(max_digits=12, decimal_places=2),
+            ),
+            expenses_this_month_raw=Coalesce(
+                Sum("amount", filter=Q(
+                    amount__lt=0,
+                    date__month=self.now.month,
+                    date__year=self.now.year,
+                )),
+                Decimal("0"),
+                output_field=DecimalField(max_digits=12, decimal_places=2),
+            ),
+            average_transaction=Coalesce(
+                Avg("amount"),
+                Decimal("0"),
+                output_field=DecimalField(max_digits=12, decimal_places=2),
+            ),
+            largest_expense=Coalesce(
+                Min("amount"),
+                Decimal("0"),
+                output_field=DecimalField(max_digits=12, decimal_places=2),
+            ),
+            largest_income=Coalesce(
+                Max("amount"),
+                Decimal("0"),
+                output_field=DecimalField(max_digits=12, decimal_places=2),
+            ),
+            total_amount=Coalesce(
+                Sum("amount"),
+                Decimal("0"),
+                output_field=DecimalField(max_digits=12, decimal_places=2),
+            ),
+        )
+
+        income_this_month = aggregates["income_this_month"]
+        expenses_this_month = abs(aggregates["expenses_this_month_raw"])
+
+        metrics = {
+            "total_transactions": aggregates["total_transactions"],
+            "income_count": aggregates["income_count"],
+            "expense_count": aggregates["expense_count"],
+            "income_this_month": income_this_month,
+            "expenses_this_month": expenses_this_month,
+            "net_this_month": income_this_month - expenses_this_month,
+            "average_transaction": aggregates["average_transaction"],
+            "largest_expense": aggregates["largest_expense"],
+            "largest_income": aggregates["largest_income"],
+        }
+
+        category_qs = Transaction.objects.filter(wallet=wallet, amount__lt=0)
+        category_breakdown = self._category_spending(category_qs)
+
+        recent_transactions = (
+            Transaction.objects.filter(wallet=wallet)
+            .select_related("category")
+            .prefetch_related("tags")
+            .order_by("-date")[:10]
+        )
+
+        return {
+            "wallet_id": wallet.id,
+            "wallet_name": wallet.name,
+            "currency": wallet.currency,
+            "balance": wallet.initial_value + aggregates["total_amount"],
+            "metrics": metrics,
+            "category_breakdown": category_breakdown,
+            "recent_transactions": recent_transactions,
+        }
+
+    def _wallets_with_monthly_aggregates(self):
+        zero = Decimal("0")
+        decimal_field = DecimalField(max_digits=12, decimal_places=2)
+        return Wallet.objects.filter(user=self.user).annotate(
+            total_transactions=Coalesce(
+                Sum("transactions__amount"),
+                zero,
+                output_field=decimal_field,
+            ),
+            income_this_month=Coalesce(
+                Sum(
+                    "transactions__amount",
+                    filter=Q(
+                        transactions__amount__gt=0,
+                        transactions__date__month=self.now.month,
+                        transactions__date__year=self.now.year,
+                    ),
+                ),
+                zero,
+                output_field=decimal_field,
+            ),
+            expenses_this_month=Coalesce(
+                Sum(
+                    "transactions__amount",
+                    filter=Q(
+                        transactions__amount__lt=0,
+                        transactions__date__month=self.now.month,
+                        transactions__date__year=self.now.year,
+                    ),
+                ),
+                zero,
+                output_field=decimal_field,
+            ),
+        )
+
+    def _category_spending(self, queryset, total_expenses=None):
+        """
+        Aggregate by category. Returns rows sorted by largest spend first.
+
+        total_expenses: optional precomputed total (absolute value) used for
+        percentage. If not given, derived from the queryset itself.
+        """
+        rows = list(
+            queryset.values(
+                "category__id",
+                "category__name",
+                "category__icon",
+                "category__color",
+            ).annotate(
+                total_amount=Sum("amount"),
+                transaction_count=Count("id"),
+            )
+        )
+
+        if total_expenses is None:
+            total_expenses = sum((abs(r["total_amount"]) for r in rows), Decimal("0"))
+
+        denominator = total_expenses if total_expenses else Decimal("1")
+        spending = []
+        for r in rows:
+            amount = r["total_amount"]
+            spending.append({
+                "category_id": r["category__id"],
+                "category_name": r["category__name"] or self.UNCATEGORIZED_NAME,
+                "category_icon": r["category__icon"] or self.UNCATEGORIZED_ICON,
+                "category_color": r["category__color"] or self.UNCATEGORIZED_COLOR,
+                "total_amount": amount,
+                "transaction_count": r["transaction_count"],
+                "percentage": float(abs(amount) / denominator * 100),
+            })
+        # Largest spend (most negative) first
+        spending.sort(key=lambda x: x["total_amount"])
+        return spending
+
+    def _monthly_trend(self, months_back=6):
+        # First day of the month, months_back months ago. Avoids the
+        # spec's inline arithmetic edge case at month==6.
+        cutoff = self._month_floor(self._shift_months(self.now, -(months_back - 1)))
+        zero = Decimal("0")
+        decimal_field = DecimalField(max_digits=12, decimal_places=2)
+
+        rows = (
+            Transaction.objects.filter(wallet__user=self.user, date__gte=cutoff)
+            .annotate(month=TruncMonth("date"))
+            .values("month")
+            .annotate(
+                income=Coalesce(
+                    Sum("amount", filter=Q(amount__gt=0)),
+                    zero,
+                    output_field=decimal_field,
+                ),
+                expenses=Coalesce(
+                    Sum("amount", filter=Q(amount__lt=0)),
+                    zero,
+                    output_field=decimal_field,
+                ),
+            )
+            .order_by("month")
+        )
+
+        return [
+            {
+                "month": r["month"].strftime("%Y-%m"),
+                "income": r["income"],
+                "expenses": abs(r["expenses"]),
+                "net": r["income"] + r["expenses"],
+            }
+            for r in rows
+        ]
+
+    @staticmethod
+    def _month_floor(dt):
+        return dt.replace(day=1, hour=0, minute=0, second=0, microsecond=0)
+
+    @staticmethod
+    def _shift_months(dt, delta):
+        # Adjust month/year without dateutil.
+        month_index = dt.month - 1 + delta
+        year = dt.year + month_index // 12
+        month = month_index % 12 + 1
+        return dt.replace(year=year, month=month, day=1)

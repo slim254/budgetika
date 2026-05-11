@@ -20,13 +20,14 @@ from .views import CustomTokenObtainPairView
 from rest_framework_simplejwt.views import (
     TokenRefreshView,
 )
-from wallets.views import TransactionCreate, TransactionDetail
+from wallets.views import TransactionCreate, TransactionDetail, UserDashboard
 
 urlpatterns = [
     path('admin/', admin.site.urls),
     path('api/', include([path('wallets/', include('wallets.urls'))])),
     path('api/transactions/', TransactionCreate.as_view(), name='transaction-create'),
     path('api/transactions/<uuid:pk>/', TransactionDetail.as_view(), name='transaction-detail'),
+    path('api/dashboard/', UserDashboard.as_view(), name='user-dashboard'),
     path('api/token/', CustomTokenObtainPairView.as_view(), name='token_obtain_pair'),
     path('api/token/refresh/', TokenRefreshView.as_view(), name='token_refresh'),
 ]

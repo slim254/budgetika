@@ -5,7 +5,7 @@ import ProtectedRoute from "@/components/ProtectedRoute";
 import { Button } from "@/components/ui/button";
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/components/ui/card";
 import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from "@/components/ui/table";
-import { ArrowLeft, Plus, Edit, Trash2, TrendingUp, TrendingDown, Upload } from "lucide-react";
+import { ArrowLeft, Plus, Edit, Trash2, TrendingUp, TrendingDown, Upload, BarChart3 } from "lucide-react";
 import { DynamicIcon } from "@/components/IconPicker";
 import { UserMenu } from "@/components/UserMenu";
 import { useParams, useRouter, useSearchParams } from "next/navigation";
@@ -180,7 +180,16 @@ export default function WalletPage() {
               >
                 <ArrowLeft className="mr-2 h-4 w-4" /> Back to Dashboard
               </Button>
-              <UserMenu />
+              <div className="flex items-center gap-2">
+                <Button
+                  variant="outline"
+                  size="sm"
+                  onClick={() => router.push(`/wallet/${params.id}/metrics`)}
+                >
+                  <BarChart3 className="mr-2 h-4 w-4" /> View metrics
+                </Button>
+                <UserMenu />
+              </div>
             </div>
             <div className="flex justify-between items-center">
               <div>

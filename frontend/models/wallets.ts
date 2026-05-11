@@ -123,3 +123,68 @@ export interface CSVExecuteResponse {
     errors: Array<{ row: number; error: string }>;
     error?: string;
 }
+
+// Dashboard / metrics types — numeric fields are strings because DRF
+// DecimalField serializes to JSON strings. Coerce with Number() at render.
+
+export interface DashboardSummary {
+    total_balance: string;
+    total_income_this_month: string;
+    total_expenses_this_month: string;
+    net_this_month: string;
+}
+
+export interface WalletSummary {
+    id: string;
+    name: string;
+    currency: Currency;
+    balance: string;
+    income_this_month: string;
+    expenses_this_month: string;
+}
+
+export interface CategorySpending {
+    category_id: string | null;
+    category_name: string;
+    category_icon: string;
+    category_color: string;
+    total_amount: string;
+    transaction_count: number;
+    percentage: number;
+}
+
+export interface MonthlyTrendPoint {
+    month: string;       // "YYYY-MM"
+    income: string;
+    expenses: string;
+    net: string;
+}
+
+export interface UserDashboardResponse {
+    summary: DashboardSummary;
+    wallets: WalletSummary[];
+    spending_by_category: CategorySpending[];
+    monthly_trend: MonthlyTrendPoint[];
+}
+
+export interface WalletMetricsBlock {
+    total_transactions: number;
+    income_count: number;
+    expense_count: number;
+    income_this_month: string;
+    expenses_this_month: string;
+    net_this_month: string;
+    average_transaction: string;
+    largest_expense: string;
+    largest_income: string;
+}
+
+export interface WalletMetricsResponse {
+    wallet_id: string;
+    wallet_name: string;
+    currency: Currency;
+    balance: string;
+    metrics: WalletMetricsBlock;
+    category_breakdown: CategorySpending[];
+    recent_transactions: Transaction[];
+}

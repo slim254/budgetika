@@ -251,18 +251,13 @@ class WalletSerializer(serializers.ModelSerializer):
         """
         Calculate the current wallet balance based on initial value and transactions.
 
-        This method is called when serializing a Wallet object to include the
-        'balance' field in the JSON response.
-
-        Args:
-            obj: The Wallet instance being serialized
-
-        Returns:
-            Decimal: The calculated balance (initial_value + income - expense)
+        Uses the `calculated_balance` annotation from the queryset when present
+        (see WalletList.get_queryset) to avoid an N+1 query when listing wallets.
+        Falls back to an aggregate query for detail views and other callers.
         """
-        transactions = Transaction.objects.filter(wallet=obj)
-        total = transactions.aggregate(Sum('amount'))['amount__sum'] or 0
-
+        if hasattr(obj, 'calculated_balance') and obj.calculated_balance is not None:
+            return obj.calculated_balance
+        total = Transaction.objects.filter(wallet=obj).aggregate(Sum('amount'))['amount__sum'] or 0
         return obj.initial_value + total
 
 
@@ -360,3 +355,70 @@ class CSVExecuteSerializer(serializers.Serializer):
         if 'date' not in value or not value['date']:
             raise serializers.ValidationError("'date' mapping is required.")
         return value
+
+
+# --- Dashboard serializers -----------------------------------------------
+# Plain (non-Model) Serializers shaping the aggregated dashboard responses.
+# Data is produced by wallets.services.DashboardService.
+
+
+class DashboardSummarySerializer(serializers.Serializer):
+    total_balance = serializers.DecimalField(max_digits=12, decimal_places=2)
+    total_income_this_month = serializers.DecimalField(max_digits=12, decimal_places=2)
+    total_expenses_this_month = serializers.DecimalField(max_digits=12, decimal_places=2)
+    net_this_month = serializers.DecimalField(max_digits=12, decimal_places=2)
+
+
+class WalletSummarySerializer(serializers.Serializer):
+    id = serializers.UUIDField()
+    name = serializers.CharField()
+    currency = serializers.CharField()
+    balance = serializers.DecimalField(max_digits=12, decimal_places=2)
+    income_this_month = serializers.DecimalField(max_digits=12, decimal_places=2)
+    expenses_this_month = serializers.DecimalField(max_digits=12, decimal_places=2)
+
+
+class CategorySpendingSerializer(serializers.Serializer):
+    category_id = serializers.UUIDField(allow_null=True)
+    category_name = serializers.CharField()
+    category_icon = serializers.CharField(allow_blank=True)
+    category_color = serializers.CharField()
+    total_amount = serializers.DecimalField(max_digits=12, decimal_places=2)
+    transaction_count = serializers.IntegerField()
+    percentage = serializers.FloatField()
+
+
+class MonthlyTrendSerializer(serializers.Serializer):
+    month = serializers.CharField()  # "YYYY-MM"
+    income = serializers.DecimalField(max_digits=12, decimal_places=2)
+    expenses = serializers.DecimalField(max_digits=12, decimal_places=2)
+    net = serializers.DecimalField(max_digits=12, decimal_places=2)
+
+
+class UserDashboardSerializer(serializers.Serializer):
+    summary = DashboardSummarySerializer()
+    wallets = WalletSummarySerializer(many=True)
+    spending_by_category = CategorySpendingSerializer(many=True)
+    monthly_trend = MonthlyTrendSerializer(many=True)
+
+
+class WalletMetricsSerializer(serializers.Serializer):
+    total_transactions = serializers.IntegerField()
+    income_count = serializers.IntegerField()
+    expense_count = serializers.IntegerField()
+    income_this_month = serializers.DecimalField(max_digits=12, decimal_places=2)
+    expenses_this_month = serializers.DecimalField(max_digits=12, decimal_places=2)
+    net_this_month = serializers.DecimalField(max_digits=12, decimal_places=2)
+    average_transaction = serializers.DecimalField(max_digits=12, decimal_places=2)
+    largest_expense = serializers.DecimalField(max_digits=12, decimal_places=2)
+    largest_income = serializers.DecimalField(max_digits=12, decimal_places=2)
+
+
+class WalletDashboardSerializer(serializers.Serializer):
+    wallet_id = serializers.UUIDField()
+    wallet_name = serializers.CharField()
+    currency = serializers.CharField()
+    balance = serializers.DecimalField(max_digits=12, decimal_places=2)
+    metrics = WalletMetricsSerializer()
+    category_breakdown = CategorySpendingSerializer(many=True)
+    recent_transactions = TransactionSerializer(many=True)

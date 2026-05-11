@@ -6,6 +6,7 @@ from .views import (
     UserTagList, UserTagDetail,
     TransactionDetail, TransactionCreate,
     CSVParseView, CSVExecuteView,
+    WalletMetrics,
 )
 
 urlpatterns = [
@@ -16,6 +17,9 @@ urlpatterns = [
     # Transaction routes (nested under wallet)
     path('<uuid:wallet_id>/transactions/', WalletTransactionList.as_view(), name='wallet-transaction-list'),
     path('<uuid:wallet_id>/transactions/<uuid:pk>/', WalletTransactionDetail.as_view(), name='wallet-transaction-detail'),
+
+    # Per-wallet metrics
+    path('<uuid:wallet_id>/metrics/', WalletMetrics.as_view(), name='wallet-metrics'),
 
     # Category routes (NOT nested - user-scoped)
     # BEFORE: path('<uuid:wallet_id>/categories/', ...)

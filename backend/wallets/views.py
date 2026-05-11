@@ -1,4 +1,7 @@
 from datetime import datetime
+from decimal import Decimal
+from django.db.models import F, Sum, DecimalField
+from django.db.models.functions import Coalesce
 from django.shortcuts import get_object_or_404
 from rest_framework import generics
 from rest_framework.permissions import IsAuthenticated
@@ -6,12 +9,13 @@ from rest_framework_simplejwt.authentication import JWTAuthentication
 from .models import Transaction, UserTransactionTag, Wallet, TransactionCategory
 from .serializers import (
     TagSerializer, TransactionSerializer, WalletSerializer, CategorySerializer,
-    CSVParseSerializer, CSVExecuteSerializer
+    CSVParseSerializer, CSVExecuteSerializer,
+    UserDashboardSerializer, WalletDashboardSerializer,
 )
 from rest_framework.views import APIView
 from rest_framework.response import Response
 from rest_framework import status
-from .services import GenericCSVImportService
+from .services import GenericCSVImportService, DashboardService
 import json
 
 
@@ -192,9 +196,17 @@ class WalletList(generics.ListCreateAPIView):
 
     def get_queryset(self):
         """
-        Returns only wallets owned by the authenticated user.
+        Returns only wallets owned by the authenticated user, annotated with
+        `calculated_balance` so WalletSerializer.get_balance can read it
+        without issuing one aggregate query per wallet.
         """
-        return Wallet.objects.filter(user=self.request.user)
+        return Wallet.objects.filter(user=self.request.user).annotate(
+            calculated_balance=F('initial_value') + Coalesce(
+                Sum('transactions__amount'),
+                Decimal('0'),
+                output_field=DecimalField(max_digits=12, decimal_places=2),
+            )
+        )
 
     def perform_create(self, serializer):
         """
@@ -536,3 +548,40 @@ class CSVExecuteView(APIView):
             return Response(result)
         else:
             return Response(result, status=status.HTTP_400_BAD_REQUEST)
+
+
+class UserDashboard(APIView):
+    """
+    Aggregated financial snapshot across all of the user's wallets.
+
+    GET /api/dashboard/
+
+    Returns: summary totals, per-wallet summaries, spending by category
+    (this month), and a 6-month income/expense trend.
+    """
+    permission_classes = [IsAuthenticated]
+    authentication_classes = [JWTAuthentication]
+
+    def get(self, request):
+        data = DashboardService(request.user).user_summary()
+        return Response(UserDashboardSerializer(data).data)
+
+
+class WalletMetrics(APIView):
+    """
+    Deep-dive metrics for a single wallet.
+
+    GET /api/wallets/{wallet_id}/metrics/
+
+    Returns: lifetime stats, this-month income/expense/net, category
+    breakdown over all transactions, and the 10 most recent transactions.
+    """
+    permission_classes = [IsAuthenticated]
+    authentication_classes = [JWTAuthentication]
+
+    def get(self, request, wallet_id):
+        wallet = get_object_or_404(Wallet, id=wallet_id, user=request.user)
+        data = DashboardService(request.user).wallet_summary(wallet)
+        return Response(
+            WalletDashboardSerializer(data, context={'request': request}).data
+        )
