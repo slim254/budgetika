@@ -19,8 +19,9 @@
 | 1 | Dashboards | 4 | 3 | No model changes — pure reads on existing data. Immediate value. |
 | 2 | Recurring Transactions | 4 | 4 | Self-contained new model. Doesn't block anything else. |
 | 3 | Search & Filters + Pagination | 4 | 3 | Improves usability before data grows. |
-| 4 | Budgeting Limits | 2 | 3 | Needs dashboard aggregation patterns established first. |
-| 5 | CSV Export | 3 | 2 | Quick win, low risk, natural complement to CSV import. |
+| 4 | Exchange Rates | 3 | 4 | Enables meaningful cross-currency dashboard totals and transactions in a foreign currency. |
+| 5 | Budgeting Limits | 2 | 3 | Needs dashboard aggregation patterns established first. |
+| 6 | CSV Export | 3 | 2 | Quick win, low risk, natural complement to CSV import. |
 
 ---
 
@@ -59,7 +60,41 @@ See **`RECURRING_TRANSACTIONS_PLAN.md`** for full spec.
 
 ---
 
-### 4. Budgeting Limits — Priority 2 · Complexity 3
+### 4. Exchange Rates — Priority 3 · Complexity 4
+
+**What:** Fetch and store historical exchange rates so that:
+1. The dashboard's "Total Balance" card can show a single meaningful sum across all wallets (converted to a chosen base currency).
+2. When a transaction is added to a PLN wallet in USD (or any cross-currency entry), its amount is auto-converted at the rate for that transaction's date.
+
+**Use cases:**
+- Cross-wallet dashboard sum: "You have PLN 5,000 + $200 → PLN 5,840 equivalent today"
+- Cross-currency transaction entry: add $100 income to a PLN wallet → stored as PLN 390 at today's rate
+
+**Scope:**
+
+*Backend:*
+- New model: `ExchangeRate(base_currency, quote_currency, date, rate)` — indexed on `(base, quote, date)`
+- Management command or scheduled task: fetch rates from a free API (e.g. [Frankfurter](https://www.frankfurter.app/) — ECB data, no key needed) and populate the table daily
+- New endpoint: `GET /api/exchange-rates/?base=pln&date=2024-01-15` — returns rates for a given base + date (or latest if no date)
+- `TransactionSerializer`: if transaction currency ≠ wallet currency, look up rate for `transaction.date` and store the converted amount (or store both raw + converted)
+- Dashboard endpoint: accept optional `?base_currency=pln` param; convert each wallet balance before summing
+
+*Frontend:*
+- Settings page: "Base currency for dashboard totals" preference (stored in user profile or `localStorage`)
+- Dashboard `MetricsSummaryCards`: when all wallets share a base, show converted sum with a "~ PLN equivalent" label
+- `TransactionDialog`: if selected currency ≠ wallet currency, show a live preview of the converted amount ("≈ PLN 390 at today's rate")
+
+**Data source:** [Frankfurter API](https://www.frankfurter.app/) — free, no API key, ECB rates, covers USD/EUR/GBP/PLN.
+
+**Files:**
+- `wallets/models.py` (new `ExchangeRate` model + migration)
+- `wallets/management/commands/fetch_exchange_rates.py` (new)
+- `wallets/serializers.py`, `wallets/views.py`, `wallets/urls.py`
+- `frontend/app/settings/page.tsx`, `frontend/components/TransactionDialog.tsx`, `frontend/app/dashboard/page.tsx`, `frontend/components/MetricsSummaryCards.tsx`
+
+---
+
+### 5. Budgeting Limits — Priority 2 · Complexity 3
 
 **What:** Per-category monthly spending cap with a progress bar showing usage.
 
@@ -72,7 +107,7 @@ See **`RECURRING_TRANSACTIONS_PLAN.md`** for full spec.
 
 ---
 
-### 5. CSV Export — Priority 3 · Complexity 2
+### 6. CSV Export — Priority 3 · Complexity 2
 
 **What:** Export a wallet's transactions to CSV (respects current month/year filter or all time).
 
@@ -96,7 +131,7 @@ See **`RECURRING_TRANSACTIONS_PLAN.md`** for full spec.
 
 - Bank CSV presets (PKO, mBank, ING, Santander — auto-fill column mapping)
 - Open Banking API integration (Plaid, SWIFT gpi for real-time sync)
-- Multi-currency wallet support (exchange rates)
+- Multi-currency wallet support (beyond exchange rates — e.g. wallet holds multiple currencies natively)
 - Shared wallets (multiple users)
 - AI-assisted auto-categorization
 - Mobile-responsive improvements
