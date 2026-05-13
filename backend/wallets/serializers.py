@@ -6,6 +6,8 @@ from .models import (
     TransactionCategory,
     RecurringTransaction,
     RecurringTransactionExecution,
+    BudgetRule,
+    BudgetMonthOverride,
 )
 from django.db.models import Sum
 
@@ -530,3 +532,111 @@ class RecurringTransactionExecutionSerializer(serializers.ModelSerializer):
         model = RecurringTransactionExecution
         fields = ["id", "scheduled_date", "executed_at", "transaction"]
         read_only_fields = fields
+
+
+class BudgetRuleSerializer(serializers.ModelSerializer):
+    category = CategorySerializer(read_only=True)
+    category_id = serializers.UUIDField(write_only=True)
+    wallet = serializers.PrimaryKeyRelatedField(read_only=True)
+
+    class Meta:
+        model = BudgetRule
+        fields = ["id", "wallet", "category", "category_id", "amount", "start_date", "end_date"]
+        read_only_fields = ["id", "wallet"]
+
+    def validate_category_id(self, value):
+        wallet = self.context["wallet"]
+        if not TransactionCategory.objects.filter(id=value, user=wallet.user).exists():
+            raise serializers.ValidationError("Category not found or doesn't belong to you.")
+        return value
+
+    def validate(self, data):
+        amount = data.get("amount")
+        if amount is not None and amount <= 0:
+            raise serializers.ValidationError({"amount": "Must be greater than zero."})
+
+        start = data.get("start_date") or getattr(self.instance, "start_date", None)
+        end = data.get("end_date") if "end_date" in data else getattr(self.instance, "end_date", None)
+
+        if start:
+            data["start_date"] = start.replace(day=1)
+            start = data["start_date"]
+        if end:
+            data["end_date"] = end.replace(day=1)
+            end = data["end_date"]
+
+        if start and end and end < start:
+            raise serializers.ValidationError({"end_date": "Must be on or after start date."})
+
+        wallet = self.context["wallet"]
+        category_id = data.get("category_id") or getattr(self.instance, "category_id", None)
+
+        if category_id and start:
+            qs = BudgetRule.objects.filter(wallet=wallet, category_id=category_id)
+            if self.instance:
+                qs = qs.exclude(pk=self.instance.pk)
+            for rule in qs:
+                # [start, end] overlaps [rule.start_date, rule.end_date] if:
+                # NOT (end < rule.start_date OR rule.end_date < start)
+                end_before_rule_start = end is not None and end < rule.start_date
+                rule_end_before_start = rule.end_date is not None and rule.end_date < start
+                if not (end_before_rule_start or rule_end_before_start):
+                    raise serializers.ValidationError(
+                        "A budget rule for this category already overlaps with the given date range."
+                    )
+
+        return data
+
+    def create(self, validated_data):
+        category_id = validated_data.pop("category_id")
+        validated_data["category"] = TransactionCategory.objects.get(id=category_id)
+        return super().create(validated_data)
+
+    def update(self, instance, validated_data):
+        if "category_id" in validated_data:
+            category_id = validated_data.pop("category_id")
+            validated_data["category"] = TransactionCategory.objects.get(id=category_id)
+        return super().update(instance, validated_data)
+
+
+class BudgetOverrideSerializer(serializers.ModelSerializer):
+    category = CategorySerializer(read_only=True)
+    category_id = serializers.UUIDField(write_only=True)
+    wallet = serializers.PrimaryKeyRelatedField(read_only=True)
+
+    class Meta:
+        model = BudgetMonthOverride
+        fields = ["id", "wallet", "category", "category_id", "year", "month", "amount"]
+        read_only_fields = ["id", "wallet"]
+
+    def validate_category_id(self, value):
+        wallet = self.context["wallet"]
+        if not TransactionCategory.objects.filter(id=value, user=wallet.user).exists():
+            raise serializers.ValidationError("Category not found or doesn't belong to you.")
+        return value
+
+    def validate(self, data):
+        amount = data.get("amount")
+        if amount is not None and amount <= 0:
+            raise serializers.ValidationError({"amount": "Must be greater than zero."})
+
+        wallet = self.context["wallet"]
+        category_id = data.get("category_id")
+        if category_id:
+            if not BudgetRule.objects.filter(wallet=wallet, category_id=category_id).exists():
+                raise serializers.ValidationError(
+                    "No budget rule exists for this category in this wallet."
+                )
+
+        return data
+
+
+class BudgetSummarySerializer(serializers.Serializer):
+    category = CategorySerializer(read_only=True)
+    limit = serializers.DecimalField(max_digits=10, decimal_places=2)
+    spent = serializers.DecimalField(max_digits=10, decimal_places=2)
+    remaining = serializers.DecimalField(max_digits=10, decimal_places=2)
+    is_over_budget = serializers.BooleanField()
+    is_override = serializers.BooleanField()
+    rule_id = serializers.UUIDField()
+    override_id = serializers.UUIDField(allow_null=True)
