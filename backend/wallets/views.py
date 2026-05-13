@@ -800,13 +800,12 @@ class BudgetSummaryView(APIView):
         try:
             month = int(request.query_params.get("month", datetime.now().month))
             year = int(request.query_params.get("year", datetime.now().year))
+            month_start = date(year, month, 1)
         except ValueError:
             return Response(
-                {"error": "month and year must be integers."},
+                {"error": "Invalid month or year."},
                 status=status.HTTP_400_BAD_REQUEST,
             )
-
-        month_start = date(year, month, 1)
 
         rules = BudgetRule.objects.filter(
             wallet=wallet,
@@ -832,6 +831,8 @@ class BudgetSummaryView(APIView):
 
         items = []
         for rule in rules:
+            if rule.category_id is None:
+                continue
             override = overrides.get(rule.category_id)
             limit = override.amount if override else rule.amount
             spent = spending.get(rule.category_id, Decimal("0"))

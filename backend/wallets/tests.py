@@ -527,6 +527,10 @@ class BudgetSummaryTest(TestCase):
         response = self.client.get(self.url)
         self.assertEqual(response.status_code, 200)
 
+    def test_summary_invalid_month_returns_400(self):
+        response = self.client.get(f"{self.url}?month=13&year=2024")
+        self.assertEqual(response.status_code, 400)
+
     def test_requires_auth(self):
         self.client.credentials()
         response = self._get()
