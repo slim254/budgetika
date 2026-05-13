@@ -257,44 +257,44 @@ export interface TransactionSearchResponse {
 
 // Budget types
 export interface BudgetRule {
-  id: string;
-  wallet: string;
-  category: Category;
-  amount: string;        // DRF DecimalField → JSON string
-  start_date: string;    // ISO date "YYYY-MM-DD"
-  end_date: string | null;
+    id: string;
+    wallet: string;
+    category: Category;
+    amount: string;        // DRF DecimalField → JSON string
+    start_date: string;    // ISO date "YYYY-MM-DD"
+    end_date: string | null;
 }
 
 export interface BudgetRuleFormData {
-  category_id: string;
-  amount: string;
-  start_date: string;    // "YYYY-MM-DD"
-  end_date: string | null;
+    category_id: string;
+    amount: string;
+    start_date: string;    // "YYYY-MM-DD"
+    end_date: string | null;
 }
 
 export interface BudgetMonthOverride {
-  id: string;
-  wallet: string;
-  category: Category;
-  year: number;
-  month: number;
-  amount: string;
+    id: string;
+    wallet: string;
+    category: Category;
+    year: number;
+    month: number;
+    amount: string;
 }
 
 export interface BudgetOverrideFormData {
-  category_id: string;
-  year: number;
-  month: number;
-  amount: string;
+    category_id: string;
+    year: number;
+    month: number;
+    amount: string;
 }
 
 export interface BudgetSummaryItem {
-  category: Category;
-  limit: string;
-  spent: string;
-  remaining: string;
-  is_over_budget: boolean;
-  is_override: boolean;
-  rule_id: string;
-  override_id: string | null;
+    category: Category;
+    limit: string;
+    spent: string;
+    remaining: string;
+    is_over_budget: boolean;
+    is_override: boolean;
+    rule_id: string;
+    override_id: string | null;
 }
