@@ -332,7 +332,8 @@ class BudgetRule(models.Model):
         ordering = ["start_date"]
 
     def __str__(self):
-        return f"{self.category.name} budget for {self.wallet.name}"
+        cat = self.category.name if self.category else "deleted category"
+        return f"{cat} budget for {self.wallet.name}"
 
 
 class BudgetMonthOverride(models.Model):
@@ -353,4 +354,5 @@ class BudgetMonthOverride(models.Model):
         ordering = ["year", "month"]
 
     def __str__(self):
-        return f"{self.category.name} override {self.year}-{self.month:02d}"
+        cat = self.category.name if self.category else "deleted category"
+        return f"{cat} override {self.year}-{self.month:02d}"
