@@ -765,7 +765,7 @@ class BudgetOverrideList(generics.ListCreateAPIView):
 
         vd = serializer.validated_data
         category_id = vd["category_id"]
-        category = TransactionCategory.objects.get(id=category_id)
+        category = TransactionCategory.objects.get(id=category_id, user=wallet.user)
 
         obj, created = BudgetMonthOverride.objects.update_or_create(
             wallet=wallet,

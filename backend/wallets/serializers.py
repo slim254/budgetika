@@ -589,13 +589,15 @@ class BudgetRuleSerializer(serializers.ModelSerializer):
 
     def create(self, validated_data):
         category_id = validated_data.pop("category_id")
-        validated_data["category"] = TransactionCategory.objects.get(id=category_id)
+        wallet = self.context["wallet"]
+        validated_data["category"] = TransactionCategory.objects.get(id=category_id, user=wallet.user)
         return super().create(validated_data)
 
     def update(self, instance, validated_data):
         if "category_id" in validated_data:
             category_id = validated_data.pop("category_id")
-            validated_data["category"] = TransactionCategory.objects.get(id=category_id)
+            wallet = self.context["wallet"]
+            validated_data["category"] = TransactionCategory.objects.get(id=category_id, user=wallet.user)
         return super().update(instance, validated_data)
 
 
