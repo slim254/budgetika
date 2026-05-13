@@ -16,6 +16,8 @@ import { CSVImportDialog } from "@/components/CSVImportDialog";
 import MonthSelector from "@/components/MonthSelector";
 import { formatCurrency } from "@/lib/currency";
 import { TransactionSearch } from "@/components/TransactionSearch";
+import { BudgetPanel } from "@/components/BudgetPanel";
+import { BudgetManagementDialog } from "@/components/BudgetManagementDialog";
 
 export default function WalletPage() {
   const [wallet, setWallet] = useState<Wallet | null>(null);
@@ -27,6 +29,8 @@ export default function WalletPage() {
   const [editingTransaction, setEditingTransaction] = useState<Transaction | null>(null);
   const [keepDialogOpen, setKeepDialogOpen] = useState<boolean>(false);
   const [importDialogOpen, setImportDialogOpen] = useState<boolean>(false);
+  const [budgetDialogOpen, setBudgetDialogOpen] = useState(false);
+  const [budgetPanelKey, setBudgetPanelKey] = useState(0);
 
   // Search mode
   const [searchMode, setSearchMode] = useState(false);
@@ -230,6 +234,10 @@ export default function WalletPage() {
     fetchTags();
   }
 
+  function handleBudgetChanged() {
+    setBudgetPanelKey((k) => k + 1);
+  }
+
   function handleEnterSearchMode() {
     searchParamsRef.current = { query: "", filters: { category: "", tag: "", date_from: "", date_to: "", min_amount: "", max_amount: "" } };
     setSearchMode(true);
@@ -374,6 +382,17 @@ export default function WalletPage() {
               </>
             )}
           </div>
+
+          {!searchMode && (
+            <BudgetPanel
+              key={budgetPanelKey}
+              walletId={params.id}
+              month={parseInt(month)}
+              year={parseInt(year)}
+              currency={wallet.currency}
+              onManageClick={() => setBudgetDialogOpen(true)}
+            />
+          )}
 
           <Card>
             <CardHeader>
@@ -562,6 +581,17 @@ export default function WalletPage() {
         onClose={handleImportDialogClose}
         onImported={handleImportComplete}
         walletId={params.id}
+      />
+
+      <BudgetManagementDialog
+        open={budgetDialogOpen}
+        onOpenChange={setBudgetDialogOpen}
+        walletId={params.id}
+        month={parseInt(month)}
+        year={parseInt(year)}
+        categories={categories}
+        currency={wallet.currency}
+        onChanged={handleBudgetChanged}
       />
     </ProtectedRoute>
   );
