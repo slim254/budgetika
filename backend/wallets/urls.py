@@ -2,6 +2,7 @@ from django.urls import path
 from .views import (
     WalletList, WalletDetail,
     WalletTransactionList, WalletTransactionDetail,
+    WalletTransactionSearch,
     UserCategoryList, UserCategoryDetail,
     UserTagList, UserTagDetail,
     TransactionDetail, TransactionCreate,
@@ -19,6 +20,7 @@ urlpatterns = [
 
     # Transaction routes (nested under wallet)
     path('<uuid:wallet_id>/transactions/', WalletTransactionList.as_view(), name='wallet-transaction-list'),
+    path('<uuid:wallet_id>/transactions/search/', WalletTransactionSearch.as_view(), name='wallet-transaction-search'),
     path('<uuid:wallet_id>/transactions/<uuid:pk>/', WalletTransactionDetail.as_view(), name='wallet-transaction-detail'),
 
     # Per-wallet metrics

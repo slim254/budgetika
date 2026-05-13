@@ -4,6 +4,7 @@ from django.db.models import F, Sum, DecimalField
 from django.db.models.functions import Coalesce
 from django.shortcuts import get_object_or_404
 from rest_framework import generics
+from rest_framework.pagination import CursorPagination
 from rest_framework.permissions import IsAuthenticated
 from rest_framework_simplejwt.authentication import JWTAuthentication
 from .models import Transaction, UserTransactionTag, Wallet, TransactionCategory, RecurringTransaction, RecurringTransactionExecution
@@ -660,3 +661,44 @@ class RecurringTransactionExecutionList(generics.ListAPIView):
         return RecurringTransactionExecution.objects.filter(
             recurring_transaction=recurring
         )
+
+class TransactionCursorPagination(CursorPagination):
+    page_size = 25
+    ordering = ('-date', '-id')
+
+
+class WalletTransactionSearch(generics.ListAPIView):
+    serializer_class = TransactionSerializer
+    permission_classes = [IsAuthenticated]
+    authentication_classes = [JWTAuthentication]
+    pagination_class = TransactionCursorPagination
+
+    def get_queryset(self):
+        wallet_id = self.kwargs['wallet_id']
+        wallet = get_object_or_404(Wallet, id=wallet_id, user=self.request.user)
+        queryset = Transaction.objects.filter(wallet=wallet).select_related('category').prefetch_related('tags')
+
+        p = self.request.query_params
+
+        if search := p.get('search'):
+            queryset = queryset.filter(note__icontains=search)
+
+        if category := p.get('category'):
+            queryset = queryset.filter(category__id=category)
+
+        if tag := p.get('tag'):
+            queryset = queryset.filter(tags__id=tag).distinct()
+
+        if date_from := p.get('date_from'):
+            queryset = queryset.filter(date__date__gte=date_from)
+
+        if date_to := p.get('date_to'):
+            queryset = queryset.filter(date__date__lte=date_to)
+
+        if min_amount := p.get('min_amount'):
+            queryset = queryset.filter(amount__gte=min_amount)
+
+        if max_amount := p.get('max_amount'):
+            queryset = queryset.filter(amount__lte=max_amount)
+
+        return queryset
