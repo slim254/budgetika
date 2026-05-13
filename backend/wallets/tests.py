@@ -327,7 +327,7 @@ class BudgetOverrideTest(TestCase):
             user=self.user, name="Override Wallet", currency="usd", initial_value=Decimal("0")
         )
         self.category = TransactionCategory.objects.create(
-            user=self.user, name="Groceries", icon="shopping-cart", color="#10B981"
+            user=self.user, name="Custom Groceries Category", icon="shopping-cart", color="#10B981"
         )
         self.rule = BudgetRule.objects.create(
             wallet=self.wallet, category=self.category,
@@ -362,7 +362,7 @@ class BudgetOverrideTest(TestCase):
 
     def test_override_without_rule_rejected(self):
         other_category = TransactionCategory.objects.create(
-            user=self.user, name="Travel", icon="plane", color="#6366F1"
+            user=self.user, name="Custom Travel Category", icon="plane", color="#6366F1"
         )
         response = self.client.post(self.url, {
             "category_id": str(other_category.id),

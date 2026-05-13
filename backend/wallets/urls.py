@@ -11,6 +11,9 @@ from .views import (
     UserRecurringTransactionList,
     WalletRecurringTransactionList, WalletRecurringTransactionDetail,
     RecurringTransactionExecutionList,
+    BudgetRuleList, BudgetRuleDetail,
+    BudgetOverrideList, BudgetOverrideDetail,
+    BudgetSummaryView,
 )
 
 urlpatterns = [
@@ -46,4 +49,11 @@ urlpatterns = [
     path('<uuid:wallet_id>/recurring/', WalletRecurringTransactionList.as_view(), name='wallet-recurring-list'),
     path('<uuid:wallet_id>/recurring/<uuid:pk>/', WalletRecurringTransactionDetail.as_view(), name='wallet-recurring-detail'),
     path('<uuid:wallet_id>/recurring/<uuid:pk>/executions/', RecurringTransactionExecutionList.as_view(), name='wallet-recurring-executions'),
+
+    # Budget routes
+    path('<uuid:wallet_id>/budgets/', BudgetRuleList.as_view(), name='budget-rule-list'),
+    path('<uuid:wallet_id>/budgets/summary/', BudgetSummaryView.as_view(), name='budget-summary'),
+    path('<uuid:wallet_id>/budgets/overrides/', BudgetOverrideList.as_view(), name='budget-override-list'),
+    path('<uuid:wallet_id>/budgets/overrides/<uuid:pk>/', BudgetOverrideDetail.as_view(), name='budget-override-detail'),
+    path('<uuid:wallet_id>/budgets/<uuid:pk>/', BudgetRuleDetail.as_view(), name='budget-rule-detail'),
 ]

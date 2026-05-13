@@ -1,18 +1,19 @@
-from datetime import datetime
+from datetime import datetime, date
 from decimal import Decimal
-from django.db.models import F, Sum, DecimalField
+from django.db.models import F, Sum, DecimalField, Q
 from django.db.models.functions import Coalesce
 from django.shortcuts import get_object_or_404
 from rest_framework import generics
 from rest_framework.pagination import CursorPagination
 from rest_framework.permissions import IsAuthenticated
 from rest_framework_simplejwt.authentication import JWTAuthentication
-from .models import Transaction, UserTransactionTag, Wallet, TransactionCategory, RecurringTransaction, RecurringTransactionExecution
+from .models import Transaction, UserTransactionTag, Wallet, TransactionCategory, RecurringTransaction, RecurringTransactionExecution, BudgetRule, BudgetMonthOverride
 from .serializers import (
     TagSerializer, TransactionSerializer, WalletSerializer, CategorySerializer,
     CSVParseSerializer, CSVExecuteSerializer,
     UserDashboardSerializer, WalletDashboardSerializer,
     RecurringTransactionSerializer, RecurringTransactionExecutionSerializer,
+    BudgetRuleSerializer, BudgetOverrideSerializer, BudgetSummarySerializer,
 )
 from rest_framework.views import APIView
 from rest_framework.response import Response
@@ -702,3 +703,149 @@ class WalletTransactionSearch(generics.ListAPIView):
             queryset = queryset.filter(amount__lte=max_amount)
 
         return queryset
+
+
+class BudgetRuleList(generics.ListCreateAPIView):
+    serializer_class = BudgetRuleSerializer
+    permission_classes = [IsAuthenticated]
+    authentication_classes = [JWTAuthentication]
+
+    def _get_wallet(self):
+        return get_object_or_404(Wallet, id=self.kwargs["wallet_id"], user=self.request.user)
+
+    def get_queryset(self):
+        return BudgetRule.objects.filter(wallet=self._get_wallet()).select_related("category")
+
+    def get_serializer_context(self):
+        ctx = super().get_serializer_context()
+        ctx["wallet"] = self._get_wallet()
+        return ctx
+
+    def perform_create(self, serializer):
+        serializer.save(wallet=self._get_wallet())
+
+
+class BudgetRuleDetail(generics.RetrieveUpdateDestroyAPIView):
+    serializer_class = BudgetRuleSerializer
+    permission_classes = [IsAuthenticated]
+    authentication_classes = [JWTAuthentication]
+
+    def _get_wallet(self):
+        return get_object_or_404(Wallet, id=self.kwargs["wallet_id"], user=self.request.user)
+
+    def get_queryset(self):
+        return BudgetRule.objects.filter(wallet=self._get_wallet()).select_related("category")
+
+    def get_serializer_context(self):
+        ctx = super().get_serializer_context()
+        ctx["wallet"] = self._get_wallet()
+        return ctx
+
+
+class BudgetOverrideList(generics.ListCreateAPIView):
+    serializer_class = BudgetOverrideSerializer
+    permission_classes = [IsAuthenticated]
+    authentication_classes = [JWTAuthentication]
+
+    def _get_wallet(self):
+        return get_object_or_404(Wallet, id=self.kwargs["wallet_id"], user=self.request.user)
+
+    def get_queryset(self):
+        return BudgetMonthOverride.objects.filter(wallet=self._get_wallet()).select_related("category")
+
+    def get_serializer_context(self):
+        ctx = super().get_serializer_context()
+        ctx["wallet"] = self._get_wallet()
+        return ctx
+
+    def create(self, request, *args, **kwargs):
+        wallet = self._get_wallet()
+        serializer = self.get_serializer(data=request.data)
+        serializer.is_valid(raise_exception=True)
+
+        vd = serializer.validated_data
+        category_id = vd["category_id"]
+        category = TransactionCategory.objects.get(id=category_id)
+
+        obj, created = BudgetMonthOverride.objects.update_or_create(
+            wallet=wallet,
+            category=category,
+            year=vd["year"],
+            month=vd["month"],
+            defaults={"amount": vd["amount"]},
+        )
+        out = BudgetOverrideSerializer(obj, context=self.get_serializer_context())
+        return Response(out.data, status=status.HTTP_201_CREATED if created else status.HTTP_200_OK)
+
+
+class BudgetOverrideDetail(generics.DestroyAPIView):
+    serializer_class = BudgetOverrideSerializer
+    permission_classes = [IsAuthenticated]
+    authentication_classes = [JWTAuthentication]
+
+    def _get_wallet(self):
+        return get_object_or_404(Wallet, id=self.kwargs["wallet_id"], user=self.request.user)
+
+    def get_queryset(self):
+        return BudgetMonthOverride.objects.filter(wallet=self._get_wallet())
+
+
+class BudgetSummaryView(APIView):
+    permission_classes = [IsAuthenticated]
+    authentication_classes = [JWTAuthentication]
+
+    def get(self, request, wallet_id):
+        wallet = get_object_or_404(Wallet, id=wallet_id, user=request.user)
+
+        try:
+            month = int(request.query_params.get("month", datetime.now().month))
+            year = int(request.query_params.get("year", datetime.now().year))
+        except ValueError:
+            return Response(
+                {"error": "month and year must be integers."},
+                status=status.HTTP_400_BAD_REQUEST,
+            )
+
+        month_start = date(year, month, 1)
+
+        rules = BudgetRule.objects.filter(
+            wallet=wallet,
+            start_date__lte=month_start,
+        ).filter(
+            Q(end_date__isnull=True) | Q(end_date__gte=month_start)
+        ).select_related("category")
+
+        overrides = {
+            o.category_id: o
+            for o in BudgetMonthOverride.objects.filter(wallet=wallet, year=year, month=month)
+        }
+
+        spending = {
+            row["category_id"]: abs(row["total"])
+            for row in Transaction.objects.filter(
+                wallet=wallet,
+                date__month=month,
+                date__year=year,
+                amount__lt=0,
+            ).values("category_id").annotate(total=Sum("amount"))
+        }
+
+        items = []
+        for rule in rules:
+            override = overrides.get(rule.category_id)
+            limit = override.amount if override else rule.amount
+            spent = spending.get(rule.category_id, Decimal("0"))
+            remaining = limit - spent
+            items.append({
+                "category": rule.category,
+                "limit": limit,
+                "spent": spent,
+                "remaining": remaining,
+                "is_over_budget": remaining < 0,
+                "is_override": override is not None,
+                "rule_id": rule.id,
+                "override_id": override.id if override else None,
+            })
+
+        serializer = BudgetSummarySerializer(items, many=True)
+        return Response(serializer.data)
