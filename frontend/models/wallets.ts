@@ -239,3 +239,18 @@ export interface RecurringExecution {
     executed_at: string;
     transaction: Transaction;
 }
+
+export interface SearchFilters {
+  category: string;
+  tag: string;
+  date_from: string;
+  date_to: string;
+  min_amount: string;
+  max_amount: string;
+}
+
+export interface TransactionSearchResponse {
+  next: string | null;
+  previous: string | null;
+  results: Transaction[];
+}
