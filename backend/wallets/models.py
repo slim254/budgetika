@@ -4,6 +4,7 @@ import calendar
 from datetime import date, timedelta, datetime
 from django.db import models
 from django.contrib.auth.models import User
+from django.core.validators import MinValueValidator, MaxValueValidator
 from dateutil.relativedelta import relativedelta
 
 
@@ -320,7 +321,8 @@ class BudgetRule(models.Model):
         Wallet, related_name="budget_rules", on_delete=models.CASCADE
     )
     category = models.ForeignKey(
-        TransactionCategory, related_name="budget_rules", on_delete=models.CASCADE
+        TransactionCategory, related_name="budget_rules",
+        on_delete=models.SET_NULL, null=True, blank=True
     )
     amount = models.DecimalField(max_digits=10, decimal_places=2)
     start_date = models.DateField()
@@ -339,14 +341,16 @@ class BudgetMonthOverride(models.Model):
         Wallet, related_name="budget_overrides", on_delete=models.CASCADE
     )
     category = models.ForeignKey(
-        TransactionCategory, related_name="budget_overrides", on_delete=models.CASCADE
+        TransactionCategory, related_name="budget_overrides",
+        on_delete=models.SET_NULL, null=True, blank=True
     )
     year = models.IntegerField()
-    month = models.IntegerField()
+    month = models.IntegerField(validators=[MinValueValidator(1), MaxValueValidator(12)])
     amount = models.DecimalField(max_digits=10, decimal_places=2)
 
     class Meta:
         unique_together = [["wallet", "category", "year", "month"]]
+        ordering = ["year", "month"]
 
     def __str__(self):
         return f"{self.category.name} override {self.year}-{self.month:02d}"
