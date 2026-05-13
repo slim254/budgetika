@@ -312,3 +312,41 @@ class RecurringTransactionExecution(models.Model):
     class Meta:
         ordering = ["-executed_at"]
         unique_together = [["recurring_transaction", "scheduled_date"]]
+
+
+class BudgetRule(models.Model):
+    id = models.UUIDField(primary_key=True, default=uuid.uuid4, editable=False)
+    wallet = models.ForeignKey(
+        Wallet, related_name="budget_rules", on_delete=models.CASCADE
+    )
+    category = models.ForeignKey(
+        TransactionCategory, related_name="budget_rules", on_delete=models.CASCADE
+    )
+    amount = models.DecimalField(max_digits=10, decimal_places=2)
+    start_date = models.DateField()
+    end_date = models.DateField(null=True, blank=True)
+
+    class Meta:
+        ordering = ["start_date"]
+
+    def __str__(self):
+        return f"{self.category.name} budget for {self.wallet.name}"
+
+
+class BudgetMonthOverride(models.Model):
+    id = models.UUIDField(primary_key=True, default=uuid.uuid4, editable=False)
+    wallet = models.ForeignKey(
+        Wallet, related_name="budget_overrides", on_delete=models.CASCADE
+    )
+    category = models.ForeignKey(
+        TransactionCategory, related_name="budget_overrides", on_delete=models.CASCADE
+    )
+    year = models.IntegerField()
+    month = models.IntegerField()
+    amount = models.DecimalField(max_digits=10, decimal_places=2)
+
+    class Meta:
+        unique_together = [["wallet", "category", "year", "month"]]
+
+    def __str__(self):
+        return f"{self.category.name} override {self.year}-{self.month:02d}"
