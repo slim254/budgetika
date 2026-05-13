@@ -1,5 +1,5 @@
 from decimal import Decimal
-from datetime import datetime
+from datetime import datetime, date as date_type
 
 from django.contrib.auth.models import User
 from django.test import TestCase
@@ -7,7 +7,7 @@ from django.utils import timezone
 from rest_framework.test import APIClient
 from rest_framework_simplejwt.tokens import RefreshToken
 
-from wallets.models import Transaction, TransactionCategory, UserTransactionTag, Wallet
+from wallets.models import BudgetMonthOverride, BudgetRule, Transaction, TransactionCategory, UserTransactionTag, Wallet
 
 
 def make_client(user):
@@ -179,10 +179,6 @@ class WalletTransactionSearchTest(TestCase):
         self.assertIsNone(response.data["next"])
 
 
-from datetime import date as date_type
-from wallets.models import BudgetRule, BudgetMonthOverride
-
-
 class BudgetRuleTest(TestCase):
     def setUp(self):
         self.user = User.objects.create_user(username="budget_user", password="pass")
@@ -286,6 +282,31 @@ class BudgetRuleTest(TestCase):
         self.assertEqual(response.status_code, 204)
         self.assertEqual(BudgetRule.objects.count(), 0)
 
+    def test_update_rule(self):
+        rule = BudgetRule.objects.create(
+            wallet=self.wallet, category=self.category,
+            amount=Decimal("300.00"), start_date=date_type(2024, 1, 1)
+        )
+        response = self.client.patch(f"{self.url}{rule.id}/", {"amount": "400.00"}, format="json")
+        self.assertEqual(response.status_code, 200)
+        rule.refresh_from_db()
+        self.assertEqual(rule.amount, Decimal("400.00"))
+
+    def test_overlapping_bounded_rules_rejected(self):
+        BudgetRule.objects.create(
+            wallet=self.wallet, category=self.category,
+            amount=Decimal("300.00"),
+            start_date=date_type(2024, 1, 1),
+            end_date=date_type(2024, 6, 1),
+        )
+        response = self.client.post(self.url, {
+            "category_id": str(self.category.id),
+            "amount": "200.00",
+            "start_date": "2024-04-01",
+            "end_date": "2024-08-01",
+        }, format="json")
+        self.assertEqual(response.status_code, 400)
+
     def test_requires_auth(self):
         self.client.credentials()
         response = self.client.get(self.url)
@@ -366,6 +387,15 @@ class BudgetOverrideTest(TestCase):
             "year": 2024,
             "month": 3,
             "amount": "-100.00",
+        }, format="json")
+        self.assertEqual(response.status_code, 400)
+
+    def test_zero_amount_override_rejected(self):
+        response = self.client.post(self.url, {
+            "category_id": str(self.category.id),
+            "year": 2024,
+            "month": 3,
+            "amount": "0.00",
         }, format="json")
         self.assertEqual(response.status_code, 400)
 
@@ -492,6 +522,10 @@ class BudgetSummaryTest(TestCase):
         )
         response = self._get(month=3, year=2024)
         self.assertEqual(response.data[0]["spent"], "0.00")
+
+    def test_summary_missing_params_uses_defaults(self):
+        response = self.client.get(self.url)
+        self.assertEqual(response.status_code, 200)
 
     def test_requires_auth(self):
         self.client.credentials()
