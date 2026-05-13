@@ -177,3 +177,329 @@ class WalletTransactionSearchTest(TestCase):
     def test_pagination_next_is_null_on_last_page(self):
         response = self.client.get(self.url)
         self.assertIsNone(response.data["next"])
+
+
+from datetime import date as date_type
+from wallets.models import BudgetRule, BudgetMonthOverride
+
+
+class BudgetRuleTest(TestCase):
+    def setUp(self):
+        self.user = User.objects.create_user(username="budget_user", password="pass")
+        self.client = make_client(self.user)
+        self.wallet = Wallet.objects.create(
+            user=self.user, name="Budget Wallet", currency="usd", initial_value=Decimal("0")
+        )
+        self.category = TransactionCategory.objects.create(
+            user=self.user, name="Food", icon="utensils", color="#F97316"
+        )
+        self.url = f"/api/wallets/{self.wallet.id}/budgets/"
+
+    def test_create_rule(self):
+        response = self.client.post(self.url, {
+            "category_id": str(self.category.id),
+            "amount": "300.00",
+            "start_date": "2024-01-15",
+        }, format="json")
+        self.assertEqual(response.status_code, 201)
+        self.assertEqual(BudgetRule.objects.count(), 1)
+        rule = BudgetRule.objects.first()
+        self.assertEqual(rule.start_date, date_type(2024, 1, 1))  # coerced to first of month
+
+    def test_create_rule_with_end_date(self):
+        response = self.client.post(self.url, {
+            "category_id": str(self.category.id),
+            "amount": "200.00",
+            "start_date": "2024-01-01",
+            "end_date": "2024-06-15",
+        }, format="json")
+        self.assertEqual(response.status_code, 201)
+        rule = BudgetRule.objects.first()
+        self.assertEqual(rule.end_date, date_type(2024, 6, 1))  # coerced to first of month
+
+    def test_amount_must_be_positive(self):
+        response = self.client.post(self.url, {
+            "category_id": str(self.category.id),
+            "amount": "-50.00",
+            "start_date": "2024-01-01",
+        }, format="json")
+        self.assertEqual(response.status_code, 400)
+
+    def test_amount_zero_rejected(self):
+        response = self.client.post(self.url, {
+            "category_id": str(self.category.id),
+            "amount": "0.00",
+            "start_date": "2024-01-01",
+        }, format="json")
+        self.assertEqual(response.status_code, 400)
+
+    def test_end_date_before_start_date_rejected(self):
+        response = self.client.post(self.url, {
+            "category_id": str(self.category.id),
+            "amount": "300.00",
+            "start_date": "2024-03-01",
+            "end_date": "2024-01-01",
+        }, format="json")
+        self.assertEqual(response.status_code, 400)
+
+    def test_overlapping_open_ended_rule_rejected(self):
+        BudgetRule.objects.create(
+            wallet=self.wallet, category=self.category,
+            amount=Decimal("300.00"), start_date=date_type(2024, 1, 1)
+        )
+        response = self.client.post(self.url, {
+            "category_id": str(self.category.id),
+            "amount": "200.00",
+            "start_date": "2024-06-01",
+        }, format="json")
+        self.assertEqual(response.status_code, 400)
+
+    def test_non_overlapping_rule_after_end_date_allowed(self):
+        BudgetRule.objects.create(
+            wallet=self.wallet, category=self.category,
+            amount=Decimal("300.00"),
+            start_date=date_type(2024, 1, 1),
+            end_date=date_type(2024, 3, 1),
+        )
+        response = self.client.post(self.url, {
+            "category_id": str(self.category.id),
+            "amount": "200.00",
+            "start_date": "2024-04-01",
+        }, format="json")
+        self.assertEqual(response.status_code, 201)
+
+    def test_list_rules(self):
+        BudgetRule.objects.create(
+            wallet=self.wallet, category=self.category,
+            amount=Decimal("300.00"), start_date=date_type(2024, 1, 1)
+        )
+        response = self.client.get(self.url)
+        self.assertEqual(response.status_code, 200)
+        self.assertEqual(len(response.data), 1)
+
+    def test_delete_rule(self):
+        rule = BudgetRule.objects.create(
+            wallet=self.wallet, category=self.category,
+            amount=Decimal("300.00"), start_date=date_type(2024, 1, 1)
+        )
+        response = self.client.delete(f"{self.url}{rule.id}/")
+        self.assertEqual(response.status_code, 204)
+        self.assertEqual(BudgetRule.objects.count(), 0)
+
+    def test_requires_auth(self):
+        self.client.credentials()
+        response = self.client.get(self.url)
+        self.assertEqual(response.status_code, 401)
+
+    def test_cross_wallet_isolation(self):
+        other_user = User.objects.create_user(username="other_budget", password="pass")
+        other_client = make_client(other_user)
+        response = other_client.get(self.url)
+        self.assertEqual(response.status_code, 404)
+
+
+class BudgetOverrideTest(TestCase):
+    def setUp(self):
+        self.user = User.objects.create_user(username="override_user", password="pass")
+        self.client = make_client(self.user)
+        self.wallet = Wallet.objects.create(
+            user=self.user, name="Override Wallet", currency="usd", initial_value=Decimal("0")
+        )
+        self.category = TransactionCategory.objects.create(
+            user=self.user, name="Groceries", icon="shopping-cart", color="#10B981"
+        )
+        self.rule = BudgetRule.objects.create(
+            wallet=self.wallet, category=self.category,
+            amount=Decimal("300.00"), start_date=date_type(2024, 1, 1)
+        )
+        self.url = f"/api/wallets/{self.wallet.id}/budgets/overrides/"
+
+    def test_create_override(self):
+        response = self.client.post(self.url, {
+            "category_id": str(self.category.id),
+            "year": 2024,
+            "month": 3,
+            "amount": "500.00",
+        }, format="json")
+        self.assertEqual(response.status_code, 201)
+        self.assertEqual(BudgetMonthOverride.objects.count(), 1)
+
+    def test_upsert_updates_existing(self):
+        BudgetMonthOverride.objects.create(
+            wallet=self.wallet, category=self.category,
+            year=2024, month=3, amount=Decimal("500.00")
+        )
+        response = self.client.post(self.url, {
+            "category_id": str(self.category.id),
+            "year": 2024,
+            "month": 3,
+            "amount": "600.00",
+        }, format="json")
+        self.assertEqual(response.status_code, 200)
+        self.assertEqual(BudgetMonthOverride.objects.count(), 1)
+        self.assertEqual(BudgetMonthOverride.objects.first().amount, Decimal("600.00"))
+
+    def test_override_without_rule_rejected(self):
+        other_category = TransactionCategory.objects.create(
+            user=self.user, name="Travel", icon="plane", color="#6366F1"
+        )
+        response = self.client.post(self.url, {
+            "category_id": str(other_category.id),
+            "year": 2024,
+            "month": 3,
+            "amount": "500.00",
+        }, format="json")
+        self.assertEqual(response.status_code, 400)
+
+    def test_delete_override(self):
+        override = BudgetMonthOverride.objects.create(
+            wallet=self.wallet, category=self.category,
+            year=2024, month=3, amount=Decimal("500.00")
+        )
+        response = self.client.delete(f"{self.url}{override.id}/")
+        self.assertEqual(response.status_code, 204)
+        self.assertEqual(BudgetMonthOverride.objects.count(), 0)
+
+    def test_amount_must_be_positive(self):
+        response = self.client.post(self.url, {
+            "category_id": str(self.category.id),
+            "year": 2024,
+            "month": 3,
+            "amount": "-100.00",
+        }, format="json")
+        self.assertEqual(response.status_code, 400)
+
+    def test_requires_auth(self):
+        self.client.credentials()
+        response = self.client.get(self.url)
+        self.assertEqual(response.status_code, 401)
+
+    def test_cross_wallet_isolation(self):
+        other_user = User.objects.create_user(username="other_override", password="pass")
+        other_client = make_client(other_user)
+        response = other_client.get(self.url)
+        self.assertEqual(response.status_code, 404)
+
+
+class BudgetSummaryTest(TestCase):
+    def setUp(self):
+        self.user = User.objects.create_user(username="summary_user", password="pass")
+        self.client = make_client(self.user)
+        self.wallet = Wallet.objects.create(
+            user=self.user, name="Summary Wallet", currency="usd", initial_value=Decimal("0")
+        )
+        self.category = TransactionCategory.objects.create(
+            user=self.user, name="Food", icon="utensils", color="#F97316"
+        )
+        self.rule = BudgetRule.objects.create(
+            wallet=self.wallet, category=self.category,
+            amount=Decimal("300.00"), start_date=date_type(2024, 1, 1)
+        )
+        self.url = f"/api/wallets/{self.wallet.id}/budgets/summary/"
+
+    def _get(self, month=3, year=2024):
+        return self.client.get(f"{self.url}?month={month}&year={year}")
+
+    def test_active_rule_appears_in_summary(self):
+        response = self._get()
+        self.assertEqual(response.status_code, 200)
+        self.assertEqual(len(response.data), 1)
+        self.assertEqual(response.data[0]["category"]["id"], str(self.category.id))
+
+    def test_rule_ended_before_month_excluded(self):
+        self.rule.end_date = date_type(2024, 2, 1)
+        self.rule.save()
+        response = self._get(month=3, year=2024)
+        self.assertEqual(len(response.data), 0)
+
+    def test_rule_starting_after_month_excluded(self):
+        self.rule.start_date = date_type(2024, 4, 1)
+        self.rule.save()
+        response = self._get(month=3, year=2024)
+        self.assertEqual(len(response.data), 0)
+
+    def test_override_takes_precedence_over_rule(self):
+        BudgetMonthOverride.objects.create(
+            wallet=self.wallet, category=self.category,
+            year=2024, month=3, amount=Decimal("500.00")
+        )
+        response = self._get()
+        self.assertEqual(response.data[0]["limit"], "500.00")
+        self.assertTrue(response.data[0]["is_override"])
+        self.assertIsNotNone(response.data[0]["override_id"])
+
+    def test_rule_without_override_not_flagged(self):
+        response = self._get()
+        self.assertFalse(response.data[0]["is_override"])
+        self.assertIsNone(response.data[0]["override_id"])
+
+    def test_spending_computed_from_negative_transactions(self):
+        Transaction.objects.create(
+            wallet=self.wallet, created_by=self.user,
+            note="Groceries", amount=Decimal("-80.00"), currency="usd",
+            date=timezone.make_aware(datetime(2024, 3, 10)),
+            category=self.category,
+        )
+        Transaction.objects.create(
+            wallet=self.wallet, created_by=self.user,
+            note="More groceries", amount=Decimal("-40.00"), currency="usd",
+            date=timezone.make_aware(datetime(2024, 3, 20)),
+            category=self.category,
+        )
+        response = self._get()
+        self.assertEqual(response.data[0]["spent"], "120.00")
+        self.assertEqual(response.data[0]["remaining"], "180.00")
+        self.assertFalse(response.data[0]["is_over_budget"])
+
+    def test_income_excluded_from_spending(self):
+        Transaction.objects.create(
+            wallet=self.wallet, created_by=self.user,
+            note="Refund", amount=Decimal("50.00"), currency="usd",
+            date=timezone.make_aware(datetime(2024, 3, 5)),
+            category=self.category,
+        )
+        response = self._get()
+        self.assertEqual(response.data[0]["spent"], "0.00")
+
+    def test_zero_spending_when_no_transactions(self):
+        response = self._get()
+        self.assertEqual(response.data[0]["spent"], "0.00")
+        self.assertEqual(response.data[0]["remaining"], "300.00")
+
+    def test_over_budget_flag(self):
+        Transaction.objects.create(
+            wallet=self.wallet, created_by=self.user,
+            note="Overspend", amount=Decimal("-350.00"), currency="usd",
+            date=timezone.make_aware(datetime(2024, 3, 1)),
+            category=self.category,
+        )
+        response = self._get()
+        self.assertTrue(response.data[0]["is_over_budget"])
+        self.assertEqual(response.data[0]["remaining"], "-50.00")
+
+    def test_archived_category_rule_still_returned(self):
+        self.category.is_archived = True
+        self.category.save()
+        response = self._get()
+        self.assertEqual(len(response.data), 1)
+
+    def test_transactions_outside_month_excluded_from_spending(self):
+        Transaction.objects.create(
+            wallet=self.wallet, created_by=self.user,
+            note="Wrong month", amount=Decimal("-100.00"), currency="usd",
+            date=timezone.make_aware(datetime(2024, 2, 28)),
+            category=self.category,
+        )
+        response = self._get(month=3, year=2024)
+        self.assertEqual(response.data[0]["spent"], "0.00")
+
+    def test_requires_auth(self):
+        self.client.credentials()
+        response = self._get()
+        self.assertEqual(response.status_code, 401)
+
+    def test_cross_wallet_isolation(self):
+        other_user = User.objects.create_user(username="other_summary", password="pass")
+        other_client = make_client(other_user)
+        response = other_client.get(f"/api/wallets/{self.wallet.id}/budgets/summary/?month=3&year=2024")
+        self.assertEqual(response.status_code, 404)
