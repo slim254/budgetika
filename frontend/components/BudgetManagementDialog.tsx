@@ -82,10 +82,12 @@ export function BudgetManagementDialog({
   const [showRuleForm, setShowRuleForm] = useState(false);
   const [ruleError, setRuleError] = useState<string | null>(null);
   const [ruleSaving, setRuleSaving] = useState(false);
+  const [deleteError, setDeleteError] = useState<string | null>(null);
 
   // Override state: category_id → input value (null = not editing)
   const [overrideEditing, setOverrideEditing] = useState<Record<string, string>>({});
   const [overrideSaving, setOverrideSaving] = useState<Record<string, boolean>>({});
+  const [overrideError, setOverrideError] = useState<string | null>(null);
 
   function loadData() {
     setLoading(true);
@@ -160,9 +162,14 @@ export function BudgetManagementDialog({
 
   async function handleDeleteRule(ruleId: string) {
     if (!confirm("Delete this budget rule?")) return;
-    await deleteBudgetRule(walletId, ruleId);
-    loadData();
-    onChanged();
+    setDeleteError(null);
+    try {
+      await deleteBudgetRule(walletId, ruleId);
+      loadData();
+      onChanged();
+    } catch {
+      setDeleteError("Failed to delete rule. Please try again.");
+    }
   }
 
   function startOverrideEdit(item: BudgetSummaryItem) {
@@ -180,6 +187,7 @@ export function BudgetManagementDialog({
   async function saveOverride(item: BudgetSummaryItem) {
     const amount = overrideEditing[item.category.id];
     if (!amount) return;
+    setOverrideError(null);
     setOverrideSaving((prev) => ({ ...prev, [item.category.id]: true }));
     try {
       await upsertBudgetOverride(walletId, {
@@ -191,6 +199,8 @@ export function BudgetManagementDialog({
       cancelOverrideEdit(item.category.id);
       loadData();
       onChanged();
+    } catch {
+      setOverrideError("Failed to save override. Please try again.");
     } finally {
       setOverrideSaving((prev) => ({ ...prev, [item.category.id]: false }));
     }
@@ -198,9 +208,14 @@ export function BudgetManagementDialog({
 
   async function removeOverride(item: BudgetSummaryItem) {
     if (!item.override_id) return;
-    await deleteBudgetOverride(walletId, item.override_id);
-    loadData();
-    onChanged();
+    setOverrideError(null);
+    try {
+      await deleteBudgetOverride(walletId, item.override_id);
+      loadData();
+      onChanged();
+    } catch {
+      setOverrideError("Failed to remove override. Please try again.");
+    }
   }
 
   const monthLabel = new Date(year, month - 1).toLocaleString("default", {
@@ -363,6 +378,10 @@ export function BudgetManagementDialog({
                 </div>
               )}
 
+              {deleteError && (
+                <p className="text-xs text-red-600">{deleteError}</p>
+              )}
+
               {!showRuleForm && (
                 <Button
                   variant="outline"
@@ -377,6 +396,10 @@ export function BudgetManagementDialog({
 
             {/* --- This month tab --- */}
             <TabsContent value="month" className="mt-4 space-y-3">
+              {overrideError && (
+                <p className="text-xs text-red-600">{overrideError}</p>
+              )}
+
               {summary.length === 0 && (
                 <p className="text-sm text-gray-500">
                   No active budget rules for this month.
