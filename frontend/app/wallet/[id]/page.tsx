@@ -175,7 +175,7 @@ export default function WalletPage() {
     );
     if (sentinelRef.current) observer.observe(sentinelRef.current);
     return () => observer.disconnect();
-  }, [searchMode, searchCursor, searchLoading]); // eslint-disable-line react-hooks/exhaustive-deps
+  }, [searchMode, searchCursor]); // eslint-disable-line react-hooks/exhaustive-deps
 
   async function handleDeleteTransaction(transactionId: string) {
     if (!confirm("Are you sure you want to delete this transaction?")) {
@@ -231,6 +231,7 @@ export default function WalletPage() {
   }
 
   function handleEnterSearchMode() {
+    searchParamsRef.current = { query: "", filters: { category: "", tag: "", date_from: "", date_to: "", min_amount: "", max_amount: "" } };
     setSearchMode(true);
     fetchSearchResults("", searchParamsRef.current.filters);
   }
