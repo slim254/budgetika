@@ -1,6 +1,6 @@
 "use client";
 
-import { useEffect, useState } from "react";
+import { useCallback, useEffect, useState } from "react";
 import { Trash2, Plus } from "lucide-react";
 import {
   Dialog,
@@ -89,7 +89,7 @@ export function BudgetManagementDialog({
   const [overrideSaving, setOverrideSaving] = useState<Record<string, boolean>>({});
   const [overrideError, setOverrideError] = useState<string | null>(null);
 
-  function loadData() {
+  const loadData = useCallback(() => {
     setLoading(true);
     Promise.all([
       getBudgetRules(walletId),
@@ -100,11 +100,11 @@ export function BudgetManagementDialog({
         setSummary(summaryRes.data);
       })
       .finally(() => setLoading(false));
-  }
+  }, [walletId, month, year]);
 
   useEffect(() => {
     if (open) loadData();
-  }, [open, walletId, month, year]); // eslint-disable-line react-hooks/exhaustive-deps
+  }, [open, loadData]);
 
   function startAddRule() {
     setEditingRuleId(null);
