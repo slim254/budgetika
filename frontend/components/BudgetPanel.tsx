@@ -54,6 +54,7 @@ export function BudgetPanel({ walletId, month, year, currency, onManageClick }: 
           <button
             onClick={toggle}
             className="flex items-center gap-2 text-sm font-medium hover:text-gray-700"
+            aria-expanded={expanded}
           >
             {expanded ? (
               <ChevronUp className="h-4 w-4" />
@@ -91,10 +92,10 @@ export function BudgetPanel({ walletId, month, year, currency, onManageClick }: 
           {!loading && !error && summary.length > 0 && (
             <div className="space-y-4">
               {summary.map((item) => {
-                const pct = Math.min(
-                  100,
-                  (Number(item.spent) / Number(item.limit)) * 100
-                );
+                const limit = Number(item.limit);
+                const pct = limit > 0
+                  ? Math.min(100, (Number(item.spent) / limit) * 100)
+                  : 0;
                 return (
                   <div key={item.category.id}>
                     <div className="flex items-center justify-between mb-1">
