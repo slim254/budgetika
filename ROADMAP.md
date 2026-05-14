@@ -217,6 +217,8 @@
 
 ### 14. Production Readiness — Priority 5 · Complexity 5
 
+📋 **Quick Reference:** See [PRODUCTION_CHECKLIST.md](./PRODUCTION_CHECKLIST.md) for a prioritized action list.
+
 **What:** All the work needed to safely deploy the app publicly: infrastructure hardening, data security, legal compliance, and observability.
 
 **Scope:**
