@@ -1,5 +1,6 @@
 from decimal import Decimal
 from datetime import datetime, date as date_type
+from unittest.mock import patch, MagicMock
 
 from django.contrib.auth.models import User
 from django.test import TestCase
@@ -541,3 +542,219 @@ class BudgetSummaryTest(TestCase):
         other_client = make_client(other_user)
         response = other_client.get(f"/api/wallets/{self.wallet.id}/budgets/summary/?month=3&year=2024")
         self.assertEqual(response.status_code, 404)
+
+
+class UserProfileSignalTest(TestCase):
+    def test_profile_created_on_user_registration(self):
+        from wallets.models import UserProfile
+        user = User.objects.create_user(username="newuser", password="pass")
+        self.assertTrue(UserProfile.objects.filter(user=user).exists())
+
+    def test_profile_preferred_currency_is_null_by_default(self):
+        from wallets.models import UserProfile
+        user = User.objects.create_user(username="newuser2", password="pass")
+        profile = UserProfile.objects.get(user=user)
+        self.assertIsNone(profile.preferred_currency)
+
+
+class GetRateTest(TestCase):
+    def test_same_currency_returns_one(self):
+        from wallets.services import get_rate
+        import datetime
+        result = get_rate("pln", "pln", datetime.date(2024, 1, 15))
+        self.assertEqual(result, Decimal("1"))
+
+    def test_returns_cached_rate_without_network_call(self):
+        from wallets.services import get_rate
+        from wallets.models import ExchangeRate
+        import datetime
+        ExchangeRate.objects.create(
+            base_currency="pln", quote_currency="eur",
+            date=datetime.date(2024, 1, 15), rate=Decimal("0.230000"),
+        )
+        result = get_rate("pln", "eur", datetime.date(2024, 1, 15))
+        self.assertEqual(result, Decimal("0.230000"))
+
+    @patch("wallets.services.requests.get")
+    def test_fetches_from_frankfurter_and_caches(self, mock_get):
+        from wallets.services import get_rate
+        from wallets.models import ExchangeRate
+        import datetime
+        mock_get.return_value.json.return_value = {
+            "date": "2024-01-15",
+            "rates": {"EUR": 0.23},
+        }
+        result = get_rate("pln", "eur", datetime.date(2024, 1, 15))
+        self.assertEqual(result, Decimal("0.23"))
+        self.assertTrue(
+            ExchangeRate.objects.filter(
+                base_currency="pln", quote_currency="eur",
+                date=datetime.date(2024, 1, 15),
+            ).exists()
+        )
+
+    @patch("wallets.services.requests.get")
+    def test_weekend_stores_both_requested_and_returned_dates(self, mock_get):
+        from wallets.services import get_rate
+        from wallets.models import ExchangeRate
+        import datetime
+        # Frankfurter returns Friday 2024-01-12 for Saturday 2024-01-13
+        mock_get.return_value.json.return_value = {
+            "date": "2024-01-12",
+            "rates": {"EUR": 0.23},
+        }
+        get_rate("pln", "eur", datetime.date(2024, 1, 13))
+        self.assertTrue(
+            ExchangeRate.objects.filter(
+                base_currency="pln", quote_currency="eur",
+                date=datetime.date(2024, 1, 12),
+            ).exists()
+        )
+        self.assertTrue(
+            ExchangeRate.objects.filter(
+                base_currency="pln", quote_currency="eur",
+                date=datetime.date(2024, 1, 13),
+            ).exists()
+        )
+
+
+class ExchangeRateEndpointTest(TestCase):
+    def setUp(self):
+        self.user = User.objects.create_user(username="tester_er", password="pass")
+        self.client = make_client(self.user)
+
+    def test_requires_authentication(self):
+        from rest_framework.test import APIClient
+        response = APIClient().get("/api/exchange-rates/?base=pln&quote=eur&date=2024-01-15")
+        self.assertEqual(response.status_code, 401)
+
+    def test_returns_400_for_invalid_base_currency(self):
+        response = self.client.get("/api/exchange-rates/?base=xyz&quote=eur&date=2024-01-15")
+        self.assertEqual(response.status_code, 400)
+
+    def test_returns_400_for_invalid_quote_currency(self):
+        response = self.client.get("/api/exchange-rates/?base=pln&quote=xyz&date=2024-01-15")
+        self.assertEqual(response.status_code, 400)
+
+    def test_returns_400_for_invalid_date(self):
+        response = self.client.get("/api/exchange-rates/?base=pln&quote=eur&date=not-a-date")
+        self.assertEqual(response.status_code, 400)
+
+    @patch("wallets.views.get_rate")
+    def test_returns_rate_for_valid_params(self, mock_get_rate):
+        mock_get_rate.return_value = Decimal("0.230000")
+        response = self.client.get("/api/exchange-rates/?base=pln&quote=eur&date=2024-01-15")
+        self.assertEqual(response.status_code, 200)
+        self.assertIn("rate", response.data)
+        self.assertIn("date", response.data)
+        self.assertEqual(response.data["date"], "2024-01-15")
+
+    @patch("wallets.views.get_rate")
+    def test_date_defaults_to_today(self, mock_get_rate):
+        import datetime
+        mock_get_rate.return_value = Decimal("0.23")
+        response = self.client.get("/api/exchange-rates/?base=pln&quote=eur")
+        self.assertEqual(response.status_code, 200)
+        self.assertEqual(response.data["date"], str(datetime.date.today()))
+
+
+class UserProfileEndpointTest(TestCase):
+    def setUp(self):
+        self.user = User.objects.create_user(username="tester_profile", password="pass")
+        self.client = make_client(self.user)
+
+    def test_get_returns_null_preferred_currency_when_no_profile(self):
+        from wallets.models import UserProfile
+        UserProfile.objects.filter(user=self.user).delete()
+        response = self.client.get("/api/profile/")
+        self.assertEqual(response.status_code, 200)
+        self.assertIsNone(response.data["preferred_currency"])
+
+    def test_get_returns_saved_currency(self):
+        from wallets.models import UserProfile
+        UserProfile.objects.get_or_create(user=self.user, defaults={"preferred_currency": "eur"})
+        UserProfile.objects.filter(user=self.user).update(preferred_currency="eur")
+        response = self.client.get("/api/profile/")
+        self.assertEqual(response.status_code, 200)
+        self.assertEqual(response.data["preferred_currency"], "eur")
+
+    def test_patch_creates_profile_and_sets_currency(self):
+        from wallets.models import UserProfile
+        UserProfile.objects.filter(user=self.user).delete()
+        response = self.client.patch("/api/profile/", {"preferred_currency": "gbp"}, format="json")
+        self.assertEqual(response.status_code, 200)
+        self.assertEqual(response.data["preferred_currency"], "gbp")
+
+    def test_patch_updates_existing_profile(self):
+        from wallets.models import UserProfile
+        profile, _ = UserProfile.objects.get_or_create(user=self.user)
+        profile.preferred_currency = "usd"
+        profile.save()
+        response = self.client.patch("/api/profile/", {"preferred_currency": "pln"}, format="json")
+        self.assertEqual(response.status_code, 200)
+        self.assertEqual(response.data["preferred_currency"], "pln")
+
+    def test_patch_returns_400_for_invalid_currency(self):
+        response = self.client.patch("/api/profile/", {"preferred_currency": "xyz"}, format="json")
+        self.assertEqual(response.status_code, 400)
+
+    def test_requires_authentication(self):
+        from rest_framework.test import APIClient
+        response = APIClient().get("/api/profile/")
+        self.assertEqual(response.status_code, 401)
+
+    def test_patch_empty_body_does_not_wipe_preferred_currency(self):
+        from wallets.models import UserProfile
+        profile, _ = UserProfile.objects.get_or_create(user=self.user)
+        profile.preferred_currency = "eur"
+        profile.save()
+        response = self.client.patch("/api/profile/", {}, format="json")
+        self.assertEqual(response.status_code, 200)
+        self.assertEqual(response.data["preferred_currency"], "eur")
+
+
+class DashboardBaseCurrencyTest(TestCase):
+    def setUp(self):
+        self.user = User.objects.create_user(username="tester_dash", password="pass")
+        self.client = make_client(self.user)
+        self.wallet = Wallet.objects.create(
+            user=self.user, name="PLN Wallet",
+            currency="pln", initial_value=Decimal("100"),
+        )
+
+    @patch("wallets.services.get_rate")
+    def test_dashboard_converts_balance_with_base_currency(self, mock_get_rate):
+        mock_get_rate.return_value = Decimal("0.25")
+        response = self.client.get("/api/dashboard/?base_currency=usd")
+        self.assertEqual(response.status_code, 200)
+        # 100 PLN * 0.25 = 25 USD
+        self.assertEqual(
+            Decimal(str(response.data["summary"]["total_balance"])),
+            Decimal("25.00"),
+        )
+
+    def test_dashboard_without_base_currency_sums_raw(self):
+        response = self.client.get("/api/dashboard/")
+        self.assertEqual(response.status_code, 200)
+        self.assertEqual(
+            Decimal(str(response.data["summary"]["total_balance"])),
+            Decimal("100.00"),
+        )
+
+    @patch("wallets.services.get_rate")
+    def test_dashboard_ignores_invalid_base_currency(self, mock_get_rate):
+        response = self.client.get("/api/dashboard/?base_currency=xyz")
+        self.assertEqual(response.status_code, 200)
+        # Invalid currency falls through to raw sum
+        mock_get_rate.assert_not_called()
+
+    @patch("wallets.services.get_rate")
+    def test_dashboard_returns_200_when_get_rate_raises(self, mock_get_rate):
+        mock_get_rate.side_effect = Exception("Frankfurter API down")
+        response = self.client.get("/api/dashboard/?base_currency=usd")
+        self.assertEqual(response.status_code, 200)
+        # Falls back to raw unconverted value for the wallet
+        self.assertEqual(
+            Decimal(str(response.data["summary"]["total_balance"])),
+            Decimal("100.00"),
+        )

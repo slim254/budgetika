@@ -2,13 +2,49 @@ from collections import defaultdict
 from decimal import Decimal
 import csv
 import datetime
+from datetime import date as _date
+import requests
 from django.db import transaction
 from django.db.models import Sum, Count, Q, Avg, Min, Max, DecimalField, F
 from django.db.models.functions import Coalesce, TruncMonth
 from django.utils import timezone
 
 
-from .models import Transaction, TransactionCategory, UserTransactionTag, Wallet
+from .models import ExchangeRate, Transaction, TransactionCategory, UserTransactionTag, Wallet
+
+
+def get_rate(base: str, quote: str, rate_date: _date) -> Decimal:
+    if base == quote:
+        return Decimal("1")
+
+    try:
+        return ExchangeRate.objects.get(
+            base_currency=base, quote_currency=quote, date=rate_date
+        ).rate
+    except ExchangeRate.DoesNotExist:
+        pass
+
+    response = requests.get(
+        f"https://api.frankfurter.app/{rate_date}",
+        params={"from": base.upper(), "to": quote.upper()},
+        timeout=5,
+    )
+    response.raise_for_status()
+    data = response.json()
+    returned_date = _date.fromisoformat(data["date"])
+    rate = Decimal(str(data["rates"][quote.upper()]))
+
+    ExchangeRate.objects.get_or_create(
+        base_currency=base, quote_currency=quote, date=returned_date,
+        defaults={"rate": rate},
+    )
+    if returned_date != rate_date:
+        ExchangeRate.objects.get_or_create(
+            base_currency=base, quote_currency=quote, date=rate_date,
+            defaults={"rate": rate},
+        )
+
+    return rate
 
 
 class GenericCSVImportService:
@@ -443,7 +479,7 @@ class DashboardService:
         self.user = user
         self.now = timezone.now()
 
-    def user_summary(self):
+    def user_summary(self, base_currency=None):
         wallets_qs = self._wallets_with_monthly_aggregates()
 
         wallet_data = []
@@ -455,9 +491,24 @@ class DashboardService:
             balance = wallet.initial_value + wallet.total_transactions
             income = wallet.income_this_month
             expenses = abs(wallet.expenses_this_month)
-            total_balance += balance
-            total_income += income
-            total_expenses += expenses
+
+            if base_currency:
+                try:
+                    rate = get_rate(wallet.currency, base_currency, datetime.date.today())
+                except Exception:
+                    rate = None
+                if rate is not None:
+                    total_balance += balance * rate
+                    total_income += income * rate
+                    total_expenses += expenses * rate
+                else:
+                    total_balance += balance
+                    total_income += income
+                    total_expenses += expenses
+            else:
+                total_balance += balance
+                total_income += income
+                total_expenses += expenses
             wallet_data.append({
                 "id": wallet.id,
                 "name": wallet.name,

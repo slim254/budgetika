@@ -3,7 +3,7 @@
 import ProtectedRoute from "@/components/ProtectedRoute";
 import { axiosInstance } from "@/api/axiosInstance";
 import { useEffect, useState } from "react";
-import { UserDashboardResponse, Wallet } from "@/models/wallets";
+import { UserDashboardResponse, Wallet, Currency } from "@/models/wallets";
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/components/ui/card";
 import { Button } from "@/components/ui/button";
 import { useRouter } from "next/navigation";
@@ -13,27 +13,22 @@ import { UserMenu } from "@/components/UserMenu";
 import { MetricsSummaryCards } from "@/components/MetricsSummaryCards";
 import { CategoryBreakdown } from "@/components/CategoryBreakdown";
 import { MonthlyTrendChart } from "@/components/MonthlyTrendChart";
-import { formatCurrency } from "@/lib/currency";
+import { formatCurrency, getLocaleCurrency } from "@/lib/currency";
+import { getProfile, patchProfile } from "@/api/profile";
 
 export default function DashboardPage() {
     const { session } = useAuthContext();
     const [wallets, setWallets] = useState<Wallet[]>([]);
     const [dashboard, setDashboard] = useState<UserDashboardResponse | null>(null);
     const [isLoading, setIsLoading] = useState<boolean>(true);
+    const [baseCurrency, setBaseCurrency] = useState<Currency>("usd");
     const router = useRouter();
 
-    async function fetchWallets() {
+    async function fetchDashboard(currency: Currency) {
         try {
-            const response = await axiosInstance.get<Wallet[]>("wallets/");
-            setWallets(response.data);
-        } catch (error) {
-            console.error("Failed to fetch wallets:", error);
-        }
-    }
-
-    async function fetchDashboard() {
-        try {
-            const response = await axiosInstance.get<UserDashboardResponse>("dashboard/");
+            const response = await axiosInstance.get<UserDashboardResponse>("dashboard/", {
+                params: { base_currency: currency },
+            });
             setDashboard(response.data);
         } catch (error) {
             console.error("Failed to fetch dashboard:", error);
@@ -42,8 +37,28 @@ export default function DashboardPage() {
 
     async function loadAll() {
         setIsLoading(true);
-        await Promise.all([fetchWallets(), fetchDashboard()]);
-        setIsLoading(false);
+        try {
+            const [walletsRes, profile] = await Promise.all([
+                axiosInstance.get<Wallet[]>("wallets/"),
+                getProfile().catch(() => ({ preferred_currency: null })),
+            ]);
+            setWallets(walletsRes.data);
+            const currency = profile.preferred_currency ?? getLocaleCurrency();
+            setBaseCurrency(currency);
+            await fetchDashboard(currency);
+        } catch (error) {
+            console.error("Failed to load dashboard:", error);
+        } finally {
+            setIsLoading(false);
+        }
+    }
+
+    async function handleCurrencyChange(currency: Currency) {
+        setBaseCurrency(currency);
+        await Promise.all([
+            patchProfile(currency).catch(() => {}),
+            fetchDashboard(currency),
+        ]);
     }
 
     useEffect(() => {
@@ -72,11 +87,10 @@ export default function DashboardPage() {
                         <>
                             <MetricsSummaryCards
                                 summary={dashboard.summary}
-                                walletCount={dashboard.wallets.length}
+                                walletCount={wallets.length}
+                                baseCurrency={baseCurrency}
+                                onCurrencyChange={handleCurrencyChange}
                             />
-                            <p className="text-xs text-muted-foreground -mt-6">
-                                Totals shown across all wallet currencies (no conversion).
-                            </p>
 
                             <div className="grid gap-6 lg:grid-cols-2">
                                 <MonthlyTrendChart data={dashboard.monthly_trend} />

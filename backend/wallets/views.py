@@ -7,18 +7,19 @@ from rest_framework import generics
 from rest_framework.pagination import CursorPagination
 from rest_framework.permissions import IsAuthenticated
 from rest_framework_simplejwt.authentication import JWTAuthentication
-from .models import Transaction, UserTransactionTag, Wallet, TransactionCategory, RecurringTransaction, RecurringTransactionExecution, BudgetRule, BudgetMonthOverride
+from .models import Transaction, UserTransactionTag, Wallet, TransactionCategory, RecurringTransaction, RecurringTransactionExecution, BudgetRule, BudgetMonthOverride, UserProfile
 from .serializers import (
     TagSerializer, TransactionSerializer, WalletSerializer, CategorySerializer,
     CSVParseSerializer, CSVExecuteSerializer,
     UserDashboardSerializer, WalletDashboardSerializer,
     RecurringTransactionSerializer, RecurringTransactionExecutionSerializer,
     BudgetRuleSerializer, BudgetOverrideSerializer, BudgetSummarySerializer,
+    UserProfileSerializer,
 )
 from rest_framework.views import APIView
 from rest_framework.response import Response
 from rest_framework import status
-from .services import GenericCSVImportService, DashboardService
+from .services import GenericCSVImportService, DashboardService, get_rate
 import json
 
 
@@ -566,7 +567,10 @@ class UserDashboard(APIView):
     authentication_classes = [JWTAuthentication]
 
     def get(self, request):
-        data = DashboardService(request.user).user_summary()
+        base_currency = request.query_params.get("base_currency", "").lower() or None
+        if base_currency and base_currency not in {"usd", "eur", "gbp", "pln"}:
+            base_currency = None
+        data = DashboardService(request.user).user_summary(base_currency=base_currency)
         return Response(UserDashboardSerializer(data).data)
 
 
@@ -850,3 +854,53 @@ class BudgetSummaryView(APIView):
 
         serializer = BudgetSummarySerializer(items, many=True)
         return Response(serializer.data)
+
+
+class ExchangeRateView(APIView):
+    permission_classes = [IsAuthenticated]
+    authentication_classes = [JWTAuthentication]
+
+    def get(self, request):
+        base = request.query_params.get("base", "").lower()
+        quote = request.query_params.get("quote", "").lower()
+        date_str = request.query_params.get("date", str(date.today()))
+
+        valid = {"usd", "eur", "gbp", "pln"}
+        if base not in valid or quote not in valid:
+            return Response(
+                {"error": "Invalid currency. Must be one of: usd, eur, gbp, pln"},
+                status=400,
+            )
+
+        try:
+            rate_date = date.fromisoformat(date_str)
+        except ValueError:
+            return Response({"error": "Invalid date format. Use YYYY-MM-DD."}, status=400)
+
+        try:
+            rate = get_rate(base, quote, rate_date)
+        except Exception:
+            return Response({"error": "Failed to fetch exchange rate."}, status=503)
+
+        return Response({"rate": str(rate), "date": str(rate_date)})
+
+
+class UserProfileView(APIView):
+    permission_classes = [IsAuthenticated]
+    authentication_classes = [JWTAuthentication]
+
+    def get(self, request):
+        try:
+            profile = UserProfile.objects.get(user=request.user)
+            return Response({"preferred_currency": profile.preferred_currency})
+        except UserProfile.DoesNotExist:
+            return Response({"preferred_currency": None})
+
+    def patch(self, request):
+        serializer = UserProfileSerializer(data=request.data)
+        serializer.is_valid(raise_exception=True)
+        profile, _ = UserProfile.objects.get_or_create(user=request.user)
+        if "preferred_currency" in serializer.validated_data:
+            profile.preferred_currency = serializer.validated_data["preferred_currency"]
+        profile.save()
+        return Response({"preferred_currency": profile.preferred_currency})

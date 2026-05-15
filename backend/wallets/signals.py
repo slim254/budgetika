@@ -58,3 +58,27 @@ def create_default_categories_for_user(sender, instance, created, **kwargs):
             icon=cat_data['icon'],
             color=cat_data['color'],
         )
+
+
+@receiver(post_save, sender=User)
+def create_user_profile(sender, instance, created, **kwargs):
+    """
+    Create a UserProfile when a new user is created.
+
+    This signal fires after any User.save() where created=True, ensuring
+    every user has an associated profile record for storing user preferences
+    like preferred currency.
+
+    Args:
+        sender: The User model class
+        instance: The actual User instance that was saved
+        created: Boolean - True if this is a new user, False if update
+        **kwargs: Additional signal arguments (raw, using, update_fields)
+    """
+    if not created:
+        return
+
+    # Import here to avoid circular imports
+    from .models import UserProfile
+
+    UserProfile.objects.get_or_create(user=instance)

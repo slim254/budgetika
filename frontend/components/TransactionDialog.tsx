@@ -1,7 +1,8 @@
 "use client";
 
-import { useState, useEffect, FormEvent } from "react";
+import { useState, useEffect, FormEvent, useRef, useMemo } from "react";
 import { axiosInstance } from "@/api/axiosInstance";
+import { getExchangeRate } from "@/api/exchangeRates";
 import { Transaction, Category, Tag, Currency, TransactionFormData, RecurringFrequency } from "@/models/wallets";
 import {
   Dialog,
@@ -37,7 +38,6 @@ import {
 import { Check, ChevronsUpDown, Plus, EyeOff } from "lucide-react";
 import { cn } from "@/lib/utils";
 import { DynamicIcon } from "@/components/IconPicker";
-import { useMemo } from "react";
 
 interface TransactionDialogProps {
   open: boolean;
@@ -103,6 +103,15 @@ export function TransactionDialog({
   const [newTagName, setNewTagName] = useState("");
   const [isCreatingTag, setIsCreatingTag] = useState(false);
   const [createTagError, setCreateTagError] = useState("");
+
+  // Cross-currency conversion state
+  const conversionTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
+  const [conversionOpen, setConversionOpen] = useState(false);
+  const [conversionCurrency, setConversionCurrency] = useState<Currency | null>(null);
+  const [conversionInput, setConversionInput] = useState<string>("");
+  const [conversionPreview, setConversionPreview] = useState<string | null>(null);
+  const [conversionError, setConversionError] = useState<string | null>(null);
+  const [isFetchingRate, setIsFetchingRate] = useState(false);
 
   // Recurring state (create mode only)
   const [isRecurring, setIsRecurring] = useState(false);
@@ -280,8 +289,54 @@ export function TransactionDialog({
       setRecurringDayOfWeek(1);
       setRecurringDayOfMonth(1);
       setRecurringEndDate("");
+      setConversionOpen(false);
+      setConversionCurrency(null);
+      setConversionInput("");
+      setConversionPreview(null);
+      setConversionError(null);
     }
   }, [transaction, currency, open]);
+
+  useEffect(() => {
+    let cancelled = false;
+
+    if (!conversionOpen || !conversionCurrency || !conversionInput || !formData.date) {
+      setConversionPreview(null);
+      return () => { cancelled = true; };
+    }
+    const amount = parseFloat(conversionInput);
+    if (isNaN(amount) || amount <= 0) {
+      setConversionError("Amount must be greater than 0.");
+      setConversionPreview(null);
+      return () => { cancelled = true; };
+    }
+    setConversionError(null); // clear any previous error before the fetch
+
+    if (conversionTimerRef.current) clearTimeout(conversionTimerRef.current);
+    conversionTimerRef.current = setTimeout(async () => {
+      setIsFetchingRate(true);
+      setConversionError(null);
+      try {
+        const data = await getExchangeRate(conversionCurrency, currency, formData.date);
+        if (cancelled) return;
+        const rate = parseFloat(data.rate);
+        const converted = parseFloat((amount * rate).toFixed(2));
+        setConversionPreview(`≈ ${converted.toFixed(2)} ${currency.toUpperCase()}`);
+        setFormData((prev) => ({ ...prev, amount: converted }));
+      } catch {
+        if (cancelled) return;
+        setConversionError("Failed to fetch exchange rate. Check your connection and try again.");
+        setConversionPreview(null);
+      } finally {
+        if (!cancelled) setIsFetchingRate(false);
+      }
+    }, 300);
+
+    return () => {
+      cancelled = true;
+      if (conversionTimerRef.current) clearTimeout(conversionTimerRef.current);
+    };
+  }, [conversionCurrency, conversionInput, formData.date, conversionOpen, currency]);
 
   function validateForm(): boolean {
     const errors: Record<string, string> = {};
@@ -317,6 +372,13 @@ export function TransactionDialog({
     setError("");
 
     if (!validateForm()) {
+      return;
+    }
+
+    if (conversionOpen && conversionCurrency && (isFetchingRate || conversionError || !conversionPreview)) {
+      setError(
+        conversionError ?? "Exchange rate is still loading. Please wait."
+      );
       return;
     }
 
@@ -435,6 +497,72 @@ export function TransactionDialog({
             />
             {fieldErrors.amount && (
               <p className="text-sm text-red-600">{fieldErrors.amount}</p>
+            )}
+          </div>
+
+          <div className="space-y-2">
+            <div className="flex items-center gap-2">
+              <Switch
+                id="conversion-toggle"
+                checked={conversionOpen}
+                onCheckedChange={(checked) => {
+                  setConversionOpen(checked);
+                  if (!checked) {
+                    setConversionCurrency(null);
+                    setConversionInput("");
+                    setConversionPreview(null);
+                    setConversionError(null);
+                    setFormData((prev) => ({ ...prev, amount: 0 }));
+                  }
+                }}
+                disabled={isLoading}
+              />
+              <Label htmlFor="conversion-toggle" className="text-sm cursor-pointer">
+                Enter in a different currency
+              </Label>
+            </div>
+
+            {conversionOpen && (
+              <div className="space-y-2 pl-2 border-l-2 border-muted">
+                <div className="flex gap-2">
+                  <Select
+                    value={conversionCurrency ?? ""}
+                    onValueChange={(v) => setConversionCurrency(v as Currency)}
+                  >
+                    <SelectTrigger className="w-28">
+                      <SelectValue placeholder="Currency" />
+                    </SelectTrigger>
+                    <SelectContent>
+                      {(["usd", "eur", "gbp", "pln"] as Currency[])
+                        .filter((c) => c !== currency)
+                        .map((c) => (
+                          <SelectItem key={c} value={c}>
+                            {c.toUpperCase()}
+                          </SelectItem>
+                        ))}
+                    </SelectContent>
+                  </Select>
+                  <Input
+                    type="number"
+                    step="0.01"
+                    min="0"
+                    placeholder="0.00"
+                    value={conversionInput}
+                    onChange={(e) => setConversionInput(e.target.value)}
+                    disabled={isLoading || !conversionCurrency}
+                    className="flex-1"
+                  />
+                </div>
+                {isFetchingRate && (
+                  <p className="text-xs text-muted-foreground">Fetching rate…</p>
+                )}
+                {conversionPreview && !isFetchingRate && (
+                  <p className="text-xs text-muted-foreground">{conversionPreview}</p>
+                )}
+                {conversionError && (
+                  <p className="text-xs text-red-600">{conversionError}</p>
+                )}
+              </div>
             )}
           </div>
 

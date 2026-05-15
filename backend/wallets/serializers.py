@@ -642,3 +642,11 @@ class BudgetSummarySerializer(serializers.Serializer):
     is_override = serializers.BooleanField()
     rule_id = serializers.UUIDField()
     override_id = serializers.UUIDField(allow_null=True)
+
+
+class UserProfileSerializer(serializers.Serializer):
+    preferred_currency = serializers.ChoiceField(
+        choices=["usd", "eur", "gbp", "pln"],
+        allow_null=True,
+        required=False,
+    )
