@@ -41,6 +41,8 @@ export interface Transaction {
     date: string;
     category: Category | null;
     tags: Tag[];
+    transfer_ref: string | null;
+    peer_wallet: { id: string; name: string; currency: Currency } | null;
 }
 
 // Form data types for creating/updating
@@ -297,4 +299,19 @@ export interface BudgetSummaryItem {
     is_override: boolean;
     rule_id: string;
     override_id: string | null;
+}
+
+export interface Transfer {
+    transfer_ref: string;
+    debit: Transaction;
+    credit: Transaction;
+}
+
+export interface TransferFormData {
+    from_wallet: string;
+    to_wallet: string;
+    from_amount: number;
+    to_amount: number;
+    date: string;
+    note: string;
 }
