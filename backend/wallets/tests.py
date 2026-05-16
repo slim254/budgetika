@@ -792,3 +792,86 @@ class TransactionSerializerTransferFieldsTest(TestCase):
         self.assertEqual(row["transfer_ref"], str(ref))
         self.assertIsNotNone(row["peer_wallet"])
         self.assertEqual(row["peer_wallet"]["name"], "Savings")
+
+
+class WalletTransferTest(TestCase):
+    def setUp(self):
+        self.user = User.objects.create_user(username="truser", password="pass")
+        self.other = User.objects.create_user(username="other", password="pass")
+        self.client = make_client(self.user)
+        self.w1 = Wallet.objects.create(user=self.user, name="Checking", currency="pln", initial_value=Decimal("1000"))
+        self.w2 = Wallet.objects.create(user=self.user, name="Savings", currency="pln", initial_value=Decimal("0"))
+        self.w_other = Wallet.objects.create(user=self.other, name="Other", currency="pln", initial_value=Decimal("0"))
+        self.create_url = "/api/wallets/transfers/"
+
+    def _create_transfer(self, from_wallet=None, to_wallet=None, from_amount="200.00", to_amount="200.00", note="Test"):
+        return self.client.post(self.create_url, {
+            "from_wallet": str(from_wallet or self.w1.id),
+            "to_wallet": str(to_wallet or self.w2.id),
+            "from_amount": from_amount,
+            "to_amount": to_amount,
+            "date": "2026-05-16T10:00:00Z",
+            "note": note,
+        }, format="json")
+
+    def test_create_same_currency_transfer(self):
+        res = self._create_transfer()
+        self.assertEqual(res.status_code, 201)
+        self.assertIn("transfer_ref", res.data)
+        self.assertEqual(res.data["debit"]["amount"], "-200.00")
+        self.assertEqual(res.data["credit"]["amount"], "200.00")
+        self.assertEqual(res.data["debit"]["currency"], "pln")
+        self.assertEqual(res.data["credit"]["currency"], "pln")
+        # both transactions created
+        self.assertEqual(Transaction.objects.filter(transfer_ref=res.data["transfer_ref"]).count(), 2)
+
+    def test_debit_peer_wallet_points_to_savings(self):
+        res = self._create_transfer()
+        self.assertEqual(res.status_code, 201)
+        self.assertEqual(res.data["debit"]["peer_wallet"]["name"], "Savings")
+        self.assertEqual(res.data["credit"]["peer_wallet"]["name"], "Checking")
+
+    def test_cannot_transfer_to_own_same_wallet(self):
+        res = self._create_transfer(from_wallet=self.w1.id, to_wallet=self.w1.id)
+        self.assertEqual(res.status_code, 400)
+
+    def test_cannot_transfer_to_other_users_wallet(self):
+        res = self._create_transfer(to_wallet=self.w_other.id)
+        self.assertEqual(res.status_code, 400)
+
+    def test_from_amount_must_be_positive(self):
+        res = self._create_transfer(from_amount="-100")
+        self.assertEqual(res.status_code, 400)
+
+    def test_delete_removes_both_legs(self):
+        res = self._create_transfer()
+        ref = res.data["transfer_ref"]
+        del_res = self.client.delete(f"/api/wallets/transfers/{ref}/")
+        self.assertEqual(del_res.status_code, 204)
+        self.assertEqual(Transaction.objects.filter(transfer_ref=ref).count(), 0)
+
+    def test_patch_updates_both_legs(self):
+        res = self._create_transfer(note="Original")
+        ref = res.data["transfer_ref"]
+        patch_res = self.client.patch(
+            f"/api/wallets/transfers/{ref}/",
+            {"note": "Updated", "from_amount": "300.00", "to_amount": "300.00"},
+            format="json",
+        )
+        self.assertEqual(patch_res.status_code, 200)
+        self.assertEqual(patch_res.data["debit"]["note"], "Updated")
+        self.assertEqual(patch_res.data["debit"]["amount"], "-300.00")
+        self.assertEqual(patch_res.data["credit"]["amount"], "300.00")
+
+    def test_delete_nonexistent_returns_404(self):
+        import uuid
+        res = self.client.delete(f"/api/wallets/transfers/{uuid.uuid4()}/")
+        self.assertEqual(res.status_code, 404)
+
+    def test_transfers_appear_in_transaction_list(self):
+        self._create_transfer()
+        res = self.client.get(f"/api/wallets/{self.w1.id}/transactions/?month=5&year=2026")
+        self.assertEqual(res.status_code, 200)
+        transfer_rows = [t for t in res.data if t["transfer_ref"] is not None]
+        self.assertEqual(len(transfer_rows), 1)
+        self.assertEqual(transfer_rows[0]["peer_wallet"]["name"], "Savings")

@@ -3,6 +3,7 @@ from decimal import Decimal
 from django.db.models import F, Sum, DecimalField, Q
 from django.db.models.functions import Coalesce
 from django.shortcuts import get_object_or_404
+from django.db import transaction as db_transaction
 from rest_framework import generics
 from rest_framework.pagination import CursorPagination
 from rest_framework.permissions import IsAuthenticated
@@ -14,7 +15,7 @@ from .serializers import (
     UserDashboardSerializer, WalletDashboardSerializer,
     RecurringTransactionSerializer, RecurringTransactionExecutionSerializer,
     BudgetRuleSerializer, BudgetOverrideSerializer, BudgetSummarySerializer,
-    UserProfileSerializer,
+    UserProfileSerializer, WalletTransferSerializer,
 )
 from rest_framework.views import APIView
 from rest_framework.response import Response
@@ -904,3 +905,84 @@ class UserProfileView(APIView):
             profile.preferred_currency = serializer.validated_data["preferred_currency"]
         profile.save()
         return Response({"preferred_currency": profile.preferred_currency})
+
+
+class WalletTransferView(APIView):
+    """
+    POST   /api/wallets/transfers/            — create a transfer
+    PATCH  /api/wallets/transfers/{ref}/      — edit both legs
+    DELETE /api/wallets/transfers/{ref}/      — delete both legs
+    """
+    permission_classes = [IsAuthenticated]
+    authentication_classes = [JWTAuthentication]
+
+    def post(self, request):
+        serializer = WalletTransferSerializer(data=request.data, context={'request': request})
+        serializer.is_valid(raise_exception=True)
+        debit, credit = serializer.save()
+        debit_data = TransactionSerializer(
+            Transaction.objects.select_related('transfer_peer__wallet').get(pk=debit.pk),
+            context={'request': request},
+        ).data
+        credit_data = TransactionSerializer(
+            Transaction.objects.select_related('transfer_peer__wallet').get(pk=credit.pk),
+            context={'request': request},
+        ).data
+        return Response(
+            {'transfer_ref': str(debit.transfer_ref), 'debit': debit_data, 'credit': credit_data},
+            status=status.HTTP_201_CREATED,
+        )
+
+    def _get_pair(self, transfer_ref, user):
+        legs = list(
+            Transaction.objects.filter(
+                transfer_ref=transfer_ref,
+                wallet__user=user,
+            ).select_related('wallet', 'transfer_peer__wallet')
+        )
+        if len(legs) != 2:
+            return None, None
+        debit = next((t for t in legs if t.amount < 0), None)
+        credit = next((t for t in legs if t.amount > 0), None)
+        return debit, credit
+
+    def patch(self, request, transfer_ref):
+        debit, credit = self._get_pair(transfer_ref, request.user)
+        if debit is None:
+            return Response(status=status.HTTP_404_NOT_FOUND)
+
+        note = request.data.get('note', debit.note)
+        date = request.data.get('date', debit.date)
+        from_amount = request.data.get('from_amount')
+        to_amount = request.data.get('to_amount')
+
+        with db_transaction.atomic():
+            debit.note = note
+            debit.date = date
+            if from_amount is not None:
+                debit.amount = -Decimal(str(from_amount))
+            debit.save()
+            credit.note = note
+            credit.date = date
+            if to_amount is not None:
+                credit.amount = Decimal(str(to_amount))
+            credit.save()
+
+        debit_data = TransactionSerializer(
+            Transaction.objects.select_related('transfer_peer__wallet').get(pk=debit.pk),
+            context={'request': request},
+        ).data
+        credit_data = TransactionSerializer(
+            Transaction.objects.select_related('transfer_peer__wallet').get(pk=credit.pk),
+            context={'request': request},
+        ).data
+        return Response({'transfer_ref': str(transfer_ref), 'debit': debit_data, 'credit': credit_data})
+
+    def delete(self, request, transfer_ref):
+        count, _ = Transaction.objects.filter(
+            transfer_ref=transfer_ref,
+            wallet__user=request.user,
+        ).delete()
+        if count == 0:
+            return Response(status=status.HTTP_404_NOT_FOUND)
+        return Response(status=status.HTTP_204_NO_CONTENT)

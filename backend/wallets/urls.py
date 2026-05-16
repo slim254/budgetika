@@ -14,6 +14,7 @@ from .views import (
     BudgetRuleList, BudgetRuleDetail,
     BudgetOverrideList, BudgetOverrideDetail,
     BudgetSummaryView,
+    WalletTransferView,
 )
 
 urlpatterns = [
@@ -56,4 +57,8 @@ urlpatterns = [
     path('<uuid:wallet_id>/budgets/overrides/', BudgetOverrideList.as_view(), name='budget-override-list'),
     path('<uuid:wallet_id>/budgets/overrides/<uuid:pk>/', BudgetOverrideDetail.as_view(), name='budget-override-detail'),
     path('<uuid:wallet_id>/budgets/<uuid:pk>/', BudgetRuleDetail.as_view(), name='budget-rule-detail'),
+
+    # Transfer routes
+    path('transfers/', WalletTransferView.as_view(), name='transfer-create'),
+    path('transfers/<uuid:transfer_ref>/', WalletTransferView.as_view(), name='transfer-detail'),
 ]
