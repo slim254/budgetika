@@ -102,11 +102,17 @@ Business logic lives in `backend/wallets/services.py` (`GenericCSVImportService`
 
 Supported: `usd`, `eur`, `gbp`, `pln`. A transaction's currency must match its wallet's currency (enforced in `TransactionSerializer.validate()`).
 
-## Pending Features (TODOs.md)
+## Pending Features
 
-- Recurring transactions
-- Dashboard with metrics
-- Budgeting (per-category monthly limits)
-- Search & filters + pagination
+Next up (see ROADMAP.md for full build order):
+- Wallet-to-wallet transfers
+- Custom date range view
+- Savings goals
+- AI auto-categorization, receipt scan, budget recommendations, chat
+- Toast messages
 - CSV export
+- Over-budget alerts
+- Auth & account management
+- Feature flags
+- Production readiness
 - Bug: future-dated transactions reset to today after save
