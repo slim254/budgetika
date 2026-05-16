@@ -19,6 +19,7 @@ import { formatCurrency } from "@/lib/currency";
 import { TransactionSearch } from "@/components/TransactionSearch";
 import { BudgetPanel } from "@/components/BudgetPanel";
 import { BudgetManagementDialog } from "@/components/BudgetManagementDialog";
+import { SavingsGoalsPanel } from "@/components/SavingsGoalsPanel";
 
 export default function WalletPage() {
   const [wallet, setWallet] = useState<Wallet | null>(null);
@@ -453,6 +454,10 @@ export default function WalletPage() {
               currency={wallet.currency}
               onManageClick={() => setBudgetDialogOpen(true)}
             />
+          )}
+
+          {!searchMode && !isDateRangeMode && (
+            <SavingsGoalsPanel walletId={params.id} walletCurrency={wallet.currency} />
           )}
 
           <Card>
