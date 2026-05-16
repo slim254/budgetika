@@ -747,6 +747,15 @@ class SavingsGoalService:
     """Calculate savings goals and progress."""
 
     @staticmethod
+    def mark_missed_goals(wallet):
+        """Mark goals as missed if target date has passed."""
+        today = _date.today()
+        missed_goals = wallet.savings_goals.filter(
+            status="active", target_date__lt=today
+        )
+        missed_goals.update(status="missed")
+
+    @staticmethod
     def get_months_until(target_date: _date) -> int:
         """Calculate months until target date. Min 1 month."""
         today = _date.today()
@@ -765,7 +774,7 @@ class SavingsGoalService:
         return (target_amount / months).quantize(Decimal("0.01"))
 
     @staticmethod
-    def get_total_monthly_needed(goals) -> Decimal:
+    def get_total_monthly_needed(goals: list) -> Decimal:
         """Sum monthly needed across all active goals."""
         total = Decimal("0")
         for goal in goals:
@@ -791,20 +800,13 @@ class SavingsGoalService:
 
     @staticmethod
     def get_monthly_summary(wallet, year: int, month: int):
-        """Get complete monthly savings summary for a wallet."""
-        today = _date.today()
-        goals = wallet.savings_goals.filter(status="active")
+        """Get complete monthly savings summary for a wallet.
 
-        # Mark any missed goals
-        for goal in goals:
-            if goal.target_date < today and goal.status == "active":
-                goal.status = "missed"
-                goal.save()
-
-        # Recalculate active goals
+        Note: Call mark_missed_goals() separately to update statuses.
+        """
         active_goals = wallet.savings_goals.filter(status="active")
         total_monthly_needed = SavingsGoalService.get_total_monthly_needed(
-            active_goals
+            list(active_goals)
         )
         actual_savings = SavingsGoalService.get_actual_savings(wallet, year, month)
         difference = actual_savings - total_monthly_needed
@@ -816,5 +818,5 @@ class SavingsGoalService:
             "actual_savings": actual_savings,
             "difference": difference,
             "status": "on_track" if difference >= 0 else "short",
-            "goals": active_goals,
+            "goals": list(active_goals),
         }
