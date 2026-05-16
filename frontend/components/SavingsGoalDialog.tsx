@@ -64,7 +64,7 @@ export function SavingsGoalDialog({
       setName("");
       setTargetAmount("");
       setTargetDate("");
-    } catch (error) {
+    } catch {
       toast.error("Failed to save goal");
     } finally {
       setIsLoading(false);

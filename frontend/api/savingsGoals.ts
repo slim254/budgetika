@@ -67,7 +67,10 @@ export const savingsGoalsAPI = {
 export const useSavingsGoals = (walletId: string) =>
   useQuery({
     queryKey: ["savings-goals", walletId],
-    queryFn: () => savingsGoalsAPI.listGoals(walletId),
+    queryFn: async () => {
+      const response = await savingsGoalsAPI.listGoals(walletId);
+      return response.data;
+    },
   });
 
 export const useMonthlySummary = (
@@ -77,15 +80,21 @@ export const useMonthlySummary = (
 ) =>
   useQuery({
     queryKey: ["savings-summary", walletId, month, year],
-    queryFn: () => savingsGoalsAPI.getMonthlySummary(walletId, month, year),
+    queryFn: async () => {
+      const response = await savingsGoalsAPI.getMonthlySummary(walletId, month, year);
+      return response.data;
+    },
   });
 
 export const useCreateGoal = (walletId: string) => {
   const queryClient = useQueryClient();
   return useMutation({
-    mutationFn: (
+    mutationFn: async (
       data: Omit<SavingsGoal, "id" | "created_at" | "status" | "monthly_needed">
-    ) => savingsGoalsAPI.createGoal(walletId, data),
+    ) => {
+      const response = await savingsGoalsAPI.createGoal(walletId, data);
+      return response.data;
+    },
     onSuccess: () => {
       queryClient.invalidateQueries({
         queryKey: ["savings-goals", walletId],
@@ -100,7 +109,7 @@ export const useCreateGoal = (walletId: string) => {
 export const useUpdateGoal = (walletId: string) => {
   const queryClient = useQueryClient();
   return useMutation({
-    mutationFn: ({
+    mutationFn: async ({
       goalId,
       data,
     }: {
@@ -108,7 +117,10 @@ export const useUpdateGoal = (walletId: string) => {
       data: Partial<
         Omit<SavingsGoal, "id" | "created_at" | "status" | "monthly_needed">
       >;
-    }) => savingsGoalsAPI.updateGoal(walletId, goalId, data),
+    }) => {
+      const response = await savingsGoalsAPI.updateGoal(walletId, goalId, data);
+      return response.data;
+    },
     onSuccess: () => {
       queryClient.invalidateQueries({
         queryKey: ["savings-goals", walletId],
