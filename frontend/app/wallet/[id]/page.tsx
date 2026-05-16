@@ -5,14 +5,15 @@ import ProtectedRoute from "@/components/ProtectedRoute";
 import { Button } from "@/components/ui/button";
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/components/ui/card";
 import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from "@/components/ui/table";
-import { ArrowLeft, Plus, Edit, Trash2, TrendingUp, TrendingDown, Upload, BarChart3, Search } from "lucide-react";
+import { ArrowLeft, Plus, Edit, Trash2, TrendingUp, TrendingDown, Upload, BarChart3, Search, ArrowLeftRight } from "lucide-react";
 import { DynamicIcon } from "@/components/IconPicker";
 import { UserMenu } from "@/components/UserMenu";
 import { useParams, useRouter, useSearchParams } from "next/navigation";
 import { useEffect, useRef, useState } from "react";
-import { Wallet, Transaction, Category, Tag, SearchFilters, TransactionSearchResponse } from "@/models/wallets";
+import { Wallet, Transaction, Category, Tag, SearchFilters, TransactionSearchResponse, Transfer } from "@/models/wallets";
 import { TransactionDialog } from "@/components/TransactionDialog";
 import { CSVImportDialog } from "@/components/CSVImportDialog";
+import { WalletTransferDialog } from "@/components/WalletTransferDialog";
 import MonthSelector from "@/components/MonthSelector";
 import { formatCurrency } from "@/lib/currency";
 import { TransactionSearch } from "@/components/TransactionSearch";
@@ -24,6 +25,7 @@ export default function WalletPage() {
   const [transactions, setTransactions] = useState<Transaction[]>([]);
   const [categories, setCategories] = useState<Category[]>([]);
   const [tags, setTags] = useState<Tag[]>([]);
+  const [wallets, setWallets] = useState<Wallet[]>([]);
   const [isLoading, setIsLoading] = useState<boolean>(true);
   const [dialogOpen, setDialogOpen] = useState<boolean>(false);
   const [editingTransaction, setEditingTransaction] = useState<Transaction | null>(null);
@@ -31,6 +33,8 @@ export default function WalletPage() {
   const [importDialogOpen, setImportDialogOpen] = useState<boolean>(false);
   const [budgetDialogOpen, setBudgetDialogOpen] = useState(false);
   const [budgetPanelKey, setBudgetPanelKey] = useState(0);
+  const [transferDialogOpen, setTransferDialogOpen] = useState(false);
+  const [editingTransfer, setEditingTransfer] = useState<Transaction | null>(null);
 
   // Search mode
   const [searchMode, setSearchMode] = useState(false);
@@ -90,9 +94,18 @@ export default function WalletPage() {
     }
   }
 
+  async function fetchWallets() {
+    try {
+      const response = await axiosInstance.get<Wallet[]>("wallets/");
+      setWallets(response.data);
+    } catch (error) {
+      console.error("Failed to fetch wallets:", error);
+    }
+  }
+
   async function loadData() {
     setIsLoading(true);
-    await Promise.all([fetchWallet(), fetchTransactions()]);
+    await Promise.all([fetchWallet(), fetchTransactions(), fetchWallets()]);
     setIsLoading(false);
   }
 
@@ -197,6 +210,16 @@ export default function WalletPage() {
       console.error("Failed to delete transaction:", error);
       alert("Failed to delete transaction. Please try again.");
     }
+  }
+
+  function handleAddTransfer() {
+    setEditingTransfer(null);
+    setTransferDialogOpen(true);
+  }
+
+  function handleEditTransfer(transaction: Transaction) {
+    setEditingTransfer(transaction);
+    setTransferDialogOpen(true);
   }
 
   function handleEditTransaction(transaction: Transaction) {
@@ -412,6 +435,10 @@ export default function WalletPage() {
                     <Upload className="mr-2 h-4 w-4" />
                     Import CSV
                   </Button>
+                  <Button variant="outline" onClick={handleAddTransfer}>
+                    <ArrowLeftRight className="mr-2 h-4 w-4" />
+                    Transfer
+                  </Button>
                   <Button onClick={handleAddTransaction}>
                     <Plus className="mr-2 h-4 w-4" />
                     Add Transaction
@@ -456,6 +483,47 @@ export default function WalletPage() {
                       </TableHeader>
                       <TableBody>
                         {displayedTransactions.map((transaction) => {
+                          if (transaction.transfer_ref) {
+                            const isOutgoing = Number(transaction.amount) < 0;
+                            const peerName = transaction.peer_wallet?.name ?? "another wallet";
+                            return (
+                              <TableRow key={transaction.id} className="bg-blue-50/30">
+                                <TableCell className="font-medium">
+                                  {new Date(transaction.date).toLocaleDateString()}
+                                </TableCell>
+                                <TableCell>
+                                  <div className="flex items-center gap-2">
+                                    <ArrowLeftRight className="h-4 w-4 text-blue-500" />
+                                    <span className="text-blue-700">
+                                      {isOutgoing ? `→ ${peerName}` : `← ${peerName}`}
+                                    </span>
+                                  </div>
+                                </TableCell>
+                                <TableCell><span className="text-gray-400">—</span></TableCell>
+                                <TableCell><span className="text-gray-400">—</span></TableCell>
+                                <TableCell>
+                                  <span className="inline-flex items-center px-2.5 py-0.5 rounded-full text-xs font-medium bg-blue-100 text-blue-800">
+                                    transfer
+                                  </span>
+                                </TableCell>
+                                <TableCell
+                                  className={`text-right font-semibold ${isOutgoing ? "text-red-600" : "text-green-600"}`}
+                                >
+                                  {isOutgoing ? "" : "+"}
+                                  {formatCurrency(transaction.amount, wallet.currency)}
+                                </TableCell>
+                                <TableCell className="text-right">
+                                  <Button
+                                    variant="ghost"
+                                    size="sm"
+                                    onClick={() => handleEditTransfer(transaction)}
+                                  >
+                                    <Edit className="h-4 w-4" />
+                                  </Button>
+                                </TableCell>
+                              </TableRow>
+                            );
+                          }
                           const isIncome = Number(transaction.amount) > 0;
                           return (
                             <TableRow key={transaction.id}>
@@ -593,6 +661,25 @@ export default function WalletPage() {
         currency={wallet.currency}
         onChanged={handleBudgetChanged}
       />
+
+      {wallet && (
+        <WalletTransferDialog
+          open={transferDialogOpen}
+          onOpenChange={setTransferDialogOpen}
+          onSaved={loadData}
+          onDeleted={loadData}
+          wallets={wallets}
+          currentWalletId={params.id}
+          editTransferRef={editingTransfer?.transfer_ref ?? null}
+          editValues={editingTransfer ? {
+            to_wallet_id: editingTransfer.peer_wallet?.id ?? "",
+            from_amount: Math.abs(Number(editingTransfer.amount)),
+            to_amount: Math.abs(Number(editingTransfer.amount)),
+            date: editingTransfer.date,
+            note: editingTransfer.note,
+          } : null}
+        />
+      )}
     </ProtectedRoute>
   );
 }
