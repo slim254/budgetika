@@ -15,6 +15,7 @@
 | Search & Filters + Pagination | Full-text note search, filter by category/tag/date range/amount range, cursor-based infinite scroll. New `WalletTransactionSearch` view + `TransactionSearch` component. |
 | Budgeting Limits | Per-category monthly spending caps with optional end date and per-month overrides. `BudgetRule` + `BudgetMonthOverride` models. Collapsible `BudgetPanel` on wallet page, two-tab `BudgetManagementDialog`. Summary endpoint computes effective limit + spending per category for a given month. |
 | Exchange Rates | On-demand Frankfurter API fetch with DB cache (`ExchangeRate` model). `UserProfile` stores preferred display currency. Dashboard currency switcher converts total balance, income, and expenses. `TransactionDialog` "Enter in a different currency" toggle with 300ms debounced live preview. |
+| Wallet-to-wallet Transfers | Two `Transaction` records linked via shared `transfer_ref` UUID and bidirectional `transfer_peer` FK. Backend endpoints: `POST /api/wallets/transfers/`, `PATCH /api/wallets/transfers/{ref}/`, `DELETE /api/wallets/transfers/{ref}/`. Frontend: "Transfer" button in wallet header, `WalletTransferDialog` with exchange rate auto-fill (300ms debounce) and manual override, distinct row rendering with arrow icon and directional labels. Cross-currency support with Frankfurter integration. |
 
 ---
 
@@ -22,39 +23,24 @@
 
 | # | Feature | Priority | Complexity | Why this order |
 |---|---|---|---|---|
-| 1 | Wallet-to-wallet Transfers | 4 | 3 | High-frequency use case; currently requires two manual transactions. |
-| 2 | Custom Date Range View | 3 | 2 | Quick win; fills gap between month view and search-all. |
-| 3 | Savings Goals | 3 | 3 | Complements budgets; natural next engagement hook. |
-| 4 | AI Auto-categorization | 3 | 3 | High-frequency action; most tangible AI value. |
-| 5 | AI Receipt Scan | 3 | 3 | Removes manual entry friction; pairs with auto-categorization. |
-| 6 | AI Budget Recommendations | 2 | 2 | Needs spending history; easy follow-on to budget feature. |
-| 7 | AI Chat & Financial Tips | 3 | 4 | Highest perceived value; more complex to do well. |
-| 8 | Toast Messages | 4 | 1 | Cross-cutting UX polish; cheap and high-impact. |
-| 9 | CSV Export | 3 | 1 | Natural complement to CSV import. |
-| 10 | Over-budget Alerts | 3 | 2 | Closes the loop on the budget feature. |
-| 11 | Auth & Account Management | 3 | 3 | Login with username or email, email verification, password reset. |
-| 12 | Feature Flags | 2 | 2 | Enables safe rollout of new features before production. |
-| 13 | Production Readiness | 5 | 5 | Security, compliance, infra hardening before public launch. |
+| 1 | Custom Date Range View | 3 | 2 | Quick win; fills gap between month view and search-all. |
+| 2 | Savings Goals | 3 | 3 | Complements budgets; natural next engagement hook. |
+| 3 | AI Auto-categorization | 3 | 3 | High-frequency action; most tangible AI value. |
+| 4 | AI Receipt Scan | 3 | 3 | Removes manual entry friction; pairs with auto-categorization. |
+| 5 | AI Budget Recommendations | 2 | 2 | Needs spending history; easy follow-on to budget feature. |
+| 6 | AI Chat & Financial Tips | 3 | 4 | Highest perceived value; more complex to do well. |
+| 7 | Toast Messages | 4 | 1 | Cross-cutting UX polish; cheap and high-impact. |
+| 8 | CSV Export | 3 | 1 | Natural complement to CSV import. |
+| 9 | Over-budget Alerts | 3 | 2 | Closes the loop on the budget feature. |
+| 10 | Auth & Account Management | 3 | 3 | Login with username or email, email verification, password reset. |
+| 11 | Feature Flags | 2 | 2 | Enables safe rollout of new features before production. |
+| 12 | Production Readiness | 5 | 5 | Security, compliance, infra hardening before public launch. |
 
 ---
 
 ## Active Features
 
-### 1. Wallet-to-wallet Transfers — Priority 4 · Complexity 3
-
-**What:** Record money moved between two of your own wallets as a linked pair — one debit in the source wallet, one credit in the destination wallet — so net worth is unaffected and the transfer is traceable.
-
-**Scope:**
-- New model: `WalletTransfer(from_wallet, to_wallet, amount, date, note)` — creates two `Transaction` records atomically, linked via a shared `transfer_ref` UUID
-- Backend: `POST /api/wallets/transfers/`, `GET /api/wallets/{id}/transfers/`
-- Frontend: "Transfer" action in the wallet page header; simplified dialog (from/to wallet, amount, date, note)
-- Transfers shown as a distinct row type in the transaction list (e.g. "→ Savings" label)
-
-**Files:** `wallets/models.py`, `wallets/serializers.py`, `wallets/views.py`, `wallets/urls.py`, `frontend/app/wallet/[id]/page.tsx`, new `frontend/components/WalletTransferDialog.tsx`
-
----
-
-### 2. Custom Date Range View — Priority 3 · Complexity 2
+### 1. Custom Date Range View — Priority 3 · Complexity 2
 
 **What:** A third mode on the wallet page alongside month view and search: pick an arbitrary start and end date (e.g. Jan–Mar 2025) and see the full transaction list + totals for that period.
 
@@ -66,7 +52,7 @@
 
 ---
 
-### 3. Savings Goals — Priority 3 · Complexity 3
+### 2. Savings Goals — Priority 3 · Complexity 3
 
 **What:** Set a named savings target (e.g. "Vacation fund — €5,000 by Dec 2026") linked to a wallet. Track progress as the wallet balance grows toward the target.
 
@@ -81,7 +67,7 @@
 
 ### AI Features
 
-#### 4. AI Auto-categorization — Priority 3 · Complexity 3
+#### 3. AI Auto-categorization — Priority 3 · Complexity 3
 
 **What:** When adding a transaction (or importing via CSV), use Claude to suggest a category based on the note text. Also expose a "Categorize all uncategorized" bulk action.
 
@@ -93,7 +79,7 @@
 
 ---
 
-#### 5. AI Receipt Scan — Priority 3 · Complexity 3
+#### 4. AI Receipt Scan — Priority 3 · Complexity 3
 
 **What:** Upload a photo of a receipt; Claude extracts the merchant, amount, date, and category from the image and pre-fills the transaction form.
 
@@ -105,7 +91,7 @@
 
 ---
 
-#### 6. AI Budget Recommendations — Priority 2 · Complexity 2
+#### 5. AI Budget Recommendations — Priority 2 · Complexity 2
 
 **What:** After 2–3 months of spending history, surface suggestions for budget limits: "You typically spend ~€280/mo on dining — want to set that as your budget?" Shown as dismissible cards inside `BudgetPanel` when no budget exists for a category.
 
@@ -117,7 +103,7 @@
 
 ---
 
-#### 7. AI Chat & Financial Tips — Priority 3 · Complexity 4
+#### 6. AI Chat & Financial Tips — Priority 3 · Complexity 4
 
 **What:** A persistent chat panel where users can ask natural-language questions about their finances ("How does this month compare to last?" / "What's my biggest expense this year?") and receive proactive tips ("You're spending 40% more on dining than usual — here are three ways to cut back").
 
@@ -129,7 +115,7 @@
 
 ---
 
-### 8. Toast Messages — Priority 4 · Complexity 1
+### 7. Toast Messages — Priority 4 · Complexity 1
 
 **What:** Consistent, dismissible toast notifications for all user-initiated actions (save, delete, error, import complete, etc.) using the shadcn/ui `Toaster`.
 
@@ -142,7 +128,7 @@
 
 ---
 
-### 9. CSV Export — Priority 3 · Complexity 1
+### 8. CSV Export — Priority 3 · Complexity 1
 
 **What:** Download a wallet's transactions as a CSV file.
 
@@ -154,7 +140,7 @@
 
 ---
 
-### 10. Over-budget Alerts — Priority 3 · Complexity 2
+### 9. Over-budget Alerts — Priority 3 · Complexity 2
 
 **What:** Notify the user when spending in a budgeted category crosses the limit mid-month.
 
@@ -166,7 +152,7 @@
 
 ---
 
-### 11. Auth & Account Management — Priority 3 · Complexity 3
+### 10. Auth & Account Management — Priority 3 · Complexity 3
 
 **What:** Allow login with either email or username. Add email verification on registration, password reset via email, and an account deletion flow.
 
@@ -178,7 +164,7 @@
 
 ---
 
-### 12. Feature Flags — Priority 2 · Complexity 2
+### 11. Feature Flags — Priority 2 · Complexity 2
 
 **What:** A simple on/off system to enable or disable features globally (or per user for gradual rollouts), without a code deploy.
 
@@ -191,7 +177,7 @@
 
 ---
 
-### 13. Production Readiness — Priority 5 · Complexity 5
+### 12. Production Readiness — Priority 5 · Complexity 5
 
 📋 **Quick Reference:** See [PRODUCTION_CHECKLIST.md](./PRODUCTION_CHECKLIST.md) for a prioritized action list.
 

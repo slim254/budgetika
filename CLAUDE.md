@@ -105,7 +105,6 @@ Supported: `usd`, `eur`, `gbp`, `pln`. A transaction's currency must match its w
 ## Pending Features
 
 Next up (see ROADMAP.md for full build order):
-- Wallet-to-wallet transfers
 - Custom date range view
 - Savings goals
 - AI auto-categorization, receipt scan, budget recommendations, chat
