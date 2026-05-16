@@ -751,6 +751,7 @@ class SavingsGoalSerializer(serializers.ModelSerializer):
         model = SavingsGoal
         fields = [
             "id",
+            "wallet",
             "name",
             "target_amount",
             "target_date",
@@ -758,7 +759,7 @@ class SavingsGoalSerializer(serializers.ModelSerializer):
             "monthly_needed",
             "created_at",
         ]
-        read_only_fields = ["id", "created_at", "status"]
+        read_only_fields = ["id", "wallet", "created_at", "status"]
 
     def get_monthly_needed(self, obj) -> Decimal:
         """Compute monthly savings needed for this goal."""
@@ -784,7 +785,7 @@ class SavingsGoalSerializer(serializers.ModelSerializer):
         """Ensure wallet belongs to authenticated user."""
         request = self.context.get("request")
         if request and hasattr(request, "user"):
-            wallet = data.get("wallet", self.instance.wallet if self.instance else None)
+            wallet = self.context.get("wallet") or (self.instance.wallet if self.instance else None)
             if wallet and wallet.user != request.user:
                 raise serializers.ValidationError(
                     "You do not have permission to create goals for this wallet."
