@@ -69,6 +69,13 @@ Balance is **never stored**. It is computed on every serialization:
 balance = initial_value + sum(transaction.amount for all transactions)
 ```
 
+### Savings Goals
+
+- Per-wallet financial planning targets (e.g., "Wedding €500 by May 25")
+- System calculates required monthly savings rate across all active goals
+- Status: active, completed, missed (missed if target_date < today)
+- No allocation mechanics — goals are forecasts, not fund reservations
+
 ## API Overview
 
 All endpoints require JWT auth (`Authorization: Bearer <token>`).
@@ -83,6 +90,9 @@ GET/POST   /api/wallets/categories/
 GET/PATCH/DELETE  /api/wallets/categories/{id}/
 GET/POST   /api/wallets/tags/
 GET/PATCH/DELETE  /api/wallets/tags/{id}/
+GET/POST   /api/wallets/{wallet_id}/goals/
+GET/PATCH/DELETE  /api/wallets/{wallet_id}/goals/{goal_id}/
+GET        /api/wallets/{wallet_id}/goals/summary/?month=M&year=Y
 POST       /api/wallets/{wallet_id}/import/parse/
 POST       /api/wallets/{wallet_id}/import/execute/
 POST       /api/token/           (login)
@@ -105,7 +115,6 @@ Supported: `usd`, `eur`, `gbp`, `pln`. A transaction's currency must match its w
 ## Pending Features
 
 Next up (see ROADMAP.md for full build order):
-- Savings goals
 - AI auto-categorization, receipt scan, budget recommendations, chat
 - Toast messages
 - CSV export
