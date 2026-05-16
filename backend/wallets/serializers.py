@@ -12,6 +12,9 @@ from .models import (
 from django.db.models import Sum
 from decimal import Decimal
 from django.utils import timezone
+import uuid
+from django.db import transaction as db_transaction
+from .services import get_rate
 
 
 class CategorySerializer(serializers.ModelSerializer):
@@ -667,3 +670,73 @@ class UserProfileSerializer(serializers.Serializer):
         allow_null=True,
         required=False,
     )
+
+
+class WalletTransferSerializer(serializers.Serializer):
+    from_wallet = serializers.UUIDField()
+    to_wallet = serializers.UUIDField()
+    from_amount = serializers.DecimalField(max_digits=10, decimal_places=2)
+    to_amount = serializers.DecimalField(max_digits=10, decimal_places=2, required=False, allow_null=True)
+    date = serializers.DateTimeField(required=False, default=timezone.now)
+    note = serializers.CharField(max_length=100, allow_blank=True, default="")
+
+    def validate(self, data):
+        user = self.context['request'].user
+        try:
+            from_wallet = Wallet.objects.get(id=data['from_wallet'], user=user)
+        except Wallet.DoesNotExist:
+            raise serializers.ValidationError({"from_wallet": "Wallet not found or doesn't belong to you."})
+        try:
+            to_wallet = Wallet.objects.get(id=data['to_wallet'], user=user)
+        except Wallet.DoesNotExist:
+            raise serializers.ValidationError({"to_wallet": "Wallet not found or doesn't belong to you."})
+        if str(data['from_wallet']) == str(data['to_wallet']):
+            raise serializers.ValidationError("from_wallet and to_wallet must be different.")
+        if data['from_amount'] <= 0:
+            raise serializers.ValidationError({"from_amount": "Must be positive."})
+        to_amount = data.get('to_amount')
+        if to_amount is not None and to_amount <= 0:
+            raise serializers.ValidationError({"to_amount": "Must be positive."})
+        data['from_wallet_obj'] = from_wallet
+        data['to_wallet_obj'] = to_wallet
+        return data
+
+    def create(self, validated_data):
+        from_wallet = validated_data['from_wallet_obj']
+        to_wallet = validated_data['to_wallet_obj']
+        from_amount = validated_data['from_amount']
+        to_amount = validated_data.get('to_amount')
+        date = validated_data.get('date') or timezone.now()
+        note = validated_data.get('note', '')
+        user = self.context['request'].user
+
+        if to_amount is None:
+            rate_date = date.date() if hasattr(date, 'date') else date
+            rate = get_rate(from_wallet.currency, to_wallet.currency, rate_date)
+            to_amount = (from_amount * rate).quantize(Decimal('0.01'))
+
+        ref = uuid.uuid4()
+        with db_transaction.atomic():
+            debit = Transaction.objects.create(
+                wallet=from_wallet,
+                created_by=user,
+                note=note,
+                amount=-from_amount,
+                currency=from_wallet.currency,
+                date=date,
+                transfer_ref=ref,
+            )
+            credit = Transaction.objects.create(
+                wallet=to_wallet,
+                created_by=user,
+                note=note,
+                amount=to_amount,
+                currency=to_wallet.currency,
+                date=date,
+                transfer_ref=ref,
+            )
+            debit.transfer_peer = credit
+            credit.transfer_peer = debit
+            debit.save(update_fields=['transfer_peer'])
+            credit.save(update_fields=['transfer_peer'])
+        return debit, credit
