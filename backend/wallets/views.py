@@ -4,23 +4,23 @@ from django.db.models import F, Sum, DecimalField, Q
 from django.db.models.functions import Coalesce
 from django.shortcuts import get_object_or_404
 from django.db import transaction as db_transaction
-from rest_framework import generics
+from rest_framework import generics, viewsets, status
 from rest_framework.pagination import CursorPagination
+from rest_framework.decorators import action
 from rest_framework.permissions import IsAuthenticated
 from rest_framework_simplejwt.authentication import JWTAuthentication
-from .models import Transaction, UserTransactionTag, Wallet, TransactionCategory, RecurringTransaction, RecurringTransactionExecution, BudgetRule, BudgetMonthOverride, UserProfile
+from .models import Transaction, UserTransactionTag, Wallet, TransactionCategory, RecurringTransaction, RecurringTransactionExecution, BudgetRule, BudgetMonthOverride, UserProfile, SavingsGoal
 from .serializers import (
     TagSerializer, TransactionSerializer, WalletSerializer, CategorySerializer,
     CSVParseSerializer, CSVExecuteSerializer,
     UserDashboardSerializer, WalletDashboardSerializer,
     RecurringTransactionSerializer, RecurringTransactionExecutionSerializer,
     BudgetRuleSerializer, BudgetOverrideSerializer, BudgetSummarySerializer,
-    UserProfileSerializer, WalletTransferSerializer,
+    UserProfileSerializer, WalletTransferSerializer, SavingsGoalSerializer,
 )
 from rest_framework.views import APIView
 from rest_framework.response import Response
-from rest_framework import status
-from .services import GenericCSVImportService, DashboardService, get_rate
+from .services import GenericCSVImportService, DashboardService, get_rate, SavingsGoalService
 import json
 
 
@@ -986,3 +986,75 @@ class WalletTransferView(APIView):
         if count == 0:
             return Response(status=status.HTTP_404_NOT_FOUND)
         return Response(status=status.HTTP_204_NO_CONTENT)
+
+
+class SavingsGoalViewSet(viewsets.ModelViewSet):
+    serializer_class = SavingsGoalSerializer
+    permission_classes = [IsAuthenticated]
+    lookup_field = "pk"
+
+    def get_queryset(self):
+        """Filter goals by wallet; ensure wallet belongs to user."""
+        wallet_id = self.kwargs.get("wallet_pk")
+        return SavingsGoal.objects.filter(
+            wallet__id=wallet_id, wallet__user=self.request.user
+        )
+
+    def perform_create(self, serializer):
+        """Set the wallet from the URL."""
+        wallet_id = self.kwargs.get("wallet_pk")
+        try:
+            wallet = Wallet.objects.get(id=wallet_id, user=self.request.user)
+        except Wallet.DoesNotExist:
+            from rest_framework import serializers
+            raise serializers.ValidationError("Wallet not found or access denied.")
+        serializer.save(wallet=wallet)
+
+    def get_serializer_context(self):
+        """Pass wallet to serializer context."""
+        context = super().get_serializer_context()
+        wallet_id = self.kwargs.get("wallet_pk")
+        try:
+            context["wallet"] = Wallet.objects.get(
+                id=wallet_id, user=self.request.user
+            )
+        except Wallet.DoesNotExist:
+            pass
+        return context
+
+    @action(
+        detail=False,
+        methods=["get"],
+        permission_classes=[IsAuthenticated],
+        url_path="summary",
+    )
+    def summary(self, request, wallet_pk=None):
+        """Get monthly savings summary for a wallet."""
+        from datetime import date
+
+        month = int(request.query_params.get("month", 0))
+        year = int(request.query_params.get("year", 0))
+
+        if not month or not year:
+            today = date.today()
+            month = today.month
+            year = today.year
+
+        try:
+            wallet = Wallet.objects.get(id=wallet_pk, user=request.user)
+        except Wallet.DoesNotExist:
+            return Response(
+                {"error": "Wallet not found"}, status=status.HTTP_404_NOT_FOUND
+            )
+
+        summary_data = SavingsGoalService.get_monthly_summary(wallet, year, month)
+        goals_qs = summary_data.pop("goals")
+        goals_serialized = SavingsGoalSerializer(
+            goals_qs, many=True, context=self.get_serializer_context()
+        ).data
+
+        response_data = {
+            **summary_data,
+            "goals": goals_serialized,
+        }
+        return Response(response_data, status=status.HTTP_200_OK)
