@@ -1,3 +1,4 @@
+import { useQuery, useMutation, useQueryClient } from "@tanstack/react-query";
 import { axiosInstance } from "@/api/axiosInstance";
 
 export interface SavingsGoal {
@@ -59,4 +60,78 @@ export const savingsGoalsAPI = {
       : `wallets/${walletId}/goals/summary/`;
     return axiosInstance.get<MonthlySummary>(url);
   },
+};
+
+// React Query hooks
+
+export const useSavingsGoals = (walletId: string) =>
+  useQuery({
+    queryKey: ["savings-goals", walletId],
+    queryFn: () => savingsGoalsAPI.listGoals(walletId),
+  });
+
+export const useMonthlySummary = (
+  walletId: string,
+  month?: number,
+  year?: number
+) =>
+  useQuery({
+    queryKey: ["savings-summary", walletId, month, year],
+    queryFn: () => savingsGoalsAPI.getMonthlySummary(walletId, month, year),
+  });
+
+export const useCreateGoal = (walletId: string) => {
+  const queryClient = useQueryClient();
+  return useMutation({
+    mutationFn: (
+      data: Omit<SavingsGoal, "id" | "created_at" | "status" | "monthly_needed">
+    ) => savingsGoalsAPI.createGoal(walletId, data),
+    onSuccess: () => {
+      queryClient.invalidateQueries({
+        queryKey: ["savings-goals", walletId],
+      });
+      queryClient.invalidateQueries({
+        queryKey: ["savings-summary", walletId],
+      });
+    },
+  });
+};
+
+export const useUpdateGoal = (walletId: string) => {
+  const queryClient = useQueryClient();
+  return useMutation({
+    mutationFn: ({
+      goalId,
+      data,
+    }: {
+      goalId: string;
+      data: Partial<
+        Omit<SavingsGoal, "id" | "created_at" | "status" | "monthly_needed">
+      >;
+    }) => savingsGoalsAPI.updateGoal(walletId, goalId, data),
+    onSuccess: () => {
+      queryClient.invalidateQueries({
+        queryKey: ["savings-goals", walletId],
+      });
+      queryClient.invalidateQueries({
+        queryKey: ["savings-summary", walletId],
+      });
+    },
+  });
+};
+
+export const useDeleteGoal = (walletId: string) => {
+  const queryClient = useQueryClient();
+  return useMutation({
+    mutationFn: (goalId: string) =>
+      savingsGoalsAPI.deleteGoal(walletId, goalId),
+    onSuccess: () => {
+      queryClient.invalidateQueries({
+        queryKey: ["savings-goals", walletId],
+      });
+      queryClient.invalidateQueries({
+        queryKey: ["savings-summary", walletId],
+      });
+    },
+  });
 };
