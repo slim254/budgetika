@@ -15,6 +15,7 @@ from .views import (
     BudgetOverrideList, BudgetOverrideDetail,
     BudgetSummaryView,
     WalletTransferView,
+    SavingsGoalViewSet,
 )
 
 urlpatterns = [
@@ -57,6 +58,11 @@ urlpatterns = [
     path('<uuid:wallet_id>/budgets/overrides/', BudgetOverrideList.as_view(), name='budget-override-list'),
     path('<uuid:wallet_id>/budgets/overrides/<uuid:pk>/', BudgetOverrideDetail.as_view(), name='budget-override-detail'),
     path('<uuid:wallet_id>/budgets/<uuid:pk>/', BudgetRuleDetail.as_view(), name='budget-rule-detail'),
+
+    # Savings goals routes (nested under wallet)
+    path('<uuid:wallet_pk>/goals/', SavingsGoalViewSet.as_view({'get': 'list', 'post': 'create'}), name='savings-goal-list'),
+    path('<uuid:wallet_pk>/goals/summary/', SavingsGoalViewSet.as_view({'get': 'summary'}), name='savings-goal-summary'),
+    path('<uuid:wallet_pk>/goals/<uuid:pk>/', SavingsGoalViewSet.as_view({'get': 'retrieve', 'patch': 'partial_update', 'delete': 'destroy'}), name='savings-goal-detail'),
 
     # Transfer routes
     path('transfers/', WalletTransferView.as_view(), name='transfer-create'),
