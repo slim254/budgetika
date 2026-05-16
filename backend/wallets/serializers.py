@@ -8,13 +8,15 @@ from .models import (
     RecurringTransactionExecution,
     BudgetRule,
     BudgetMonthOverride,
+    SavingsGoal,
 )
 from django.db.models import Sum
 from decimal import Decimal
 from django.utils import timezone
 import uuid
 from django.db import transaction as db_transaction
-from .services import get_rate
+from .services import get_rate, SavingsGoalService
+from datetime import date
 
 
 class CategorySerializer(serializers.ModelSerializer):
@@ -740,3 +742,51 @@ class WalletTransferSerializer(serializers.Serializer):
             debit.save(update_fields=['transfer_peer'])
             credit.save(update_fields=['transfer_peer'])
         return debit, credit
+
+
+class SavingsGoalSerializer(serializers.ModelSerializer):
+    monthly_needed = serializers.SerializerMethodField()
+
+    class Meta:
+        model = SavingsGoal
+        fields = [
+            "id",
+            "name",
+            "target_amount",
+            "target_date",
+            "status",
+            "monthly_needed",
+            "created_at",
+        ]
+        read_only_fields = ["id", "created_at", "status"]
+
+    def get_monthly_needed(self, obj) -> Decimal:
+        """Compute monthly savings needed for this goal."""
+        return SavingsGoalService.get_monthly_needed(
+            obj.target_amount, obj.target_date
+        )
+
+    def validate_target_date(self, value):
+        """Target date must be today or in the future at creation."""
+        if self.instance is None and value < date.today():
+            raise serializers.ValidationError(
+                "Target date must be today or in the future."
+            )
+        return value
+
+    def validate_target_amount(self, value):
+        """Target amount must be positive."""
+        if value <= 0:
+            raise serializers.ValidationError("Target amount must be greater than 0.")
+        return value
+
+    def validate(self, data):
+        """Ensure wallet belongs to authenticated user."""
+        request = self.context.get("request")
+        if request and hasattr(request, "user"):
+            wallet = data.get("wallet", self.instance.wallet if self.instance else None)
+            if wallet and wallet.user != request.user:
+                raise serializers.ValidationError(
+                    "You do not have permission to create goals for this wallet."
+                )
+        return data
