@@ -1,5 +1,7 @@
 from collections import defaultdict
 from decimal import Decimal
+from datetime import timedelta
+from math import ceil
 import csv
 import datetime
 from datetime import date as _date
@@ -10,7 +12,7 @@ from django.db.models.functions import Coalesce, TruncMonth
 from django.utils import timezone
 
 
-from .models import ExchangeRate, Transaction, TransactionCategory, UserTransactionTag, Wallet
+from .models import ExchangeRate, SavingsGoal, Transaction, TransactionCategory, UserTransactionTag, Wallet
 
 
 def get_rate(base: str, quote: str, rate_date: _date) -> Decimal:
@@ -739,3 +741,80 @@ class DashboardService:
         year = dt.year + month_index // 12
         month = month_index % 12 + 1
         return dt.replace(year=year, month=month, day=1)
+
+
+class SavingsGoalService:
+    """Calculate savings goals and progress."""
+
+    @staticmethod
+    def get_months_until(target_date: _date) -> int:
+        """Calculate months until target date. Min 1 month."""
+        today = _date.today()
+        days_until = (target_date - today).days
+        if days_until < 0:
+            return 0
+        months = ceil(days_until / 30.44)
+        return max(1, months)
+
+    @staticmethod
+    def get_monthly_needed(target_amount: Decimal, target_date: _date) -> Decimal:
+        """Calculate monthly savings needed for a single goal."""
+        months = SavingsGoalService.get_months_until(target_date)
+        if months == 0:
+            return Decimal("0")
+        return (target_amount / months).quantize(Decimal("0.01"))
+
+    @staticmethod
+    def get_total_monthly_needed(goals) -> Decimal:
+        """Sum monthly needed across all active goals."""
+        total = Decimal("0")
+        for goal in goals:
+            total += SavingsGoalService.get_monthly_needed(
+                goal.target_amount, goal.target_date
+            )
+        return total.quantize(Decimal("0.01"))
+
+    @staticmethod
+    def get_actual_savings(wallet, year: int, month: int) -> Decimal:
+        """Calculate income - expenses for a given month."""
+        transactions = wallet.transactions.filter(
+            date__year=year, date__month=month
+        )
+        income = transactions.filter(amount__gt=0).aggregate(
+            total=Sum("amount")
+        )["total"] or Decimal("0")
+        expenses = transactions.filter(amount__lt=0).aggregate(
+            total=Sum("amount")
+        )["total"] or Decimal("0")
+        actual = income + expenses  # expenses are negative, so this is subtraction
+        return actual.quantize(Decimal("0.01"))
+
+    @staticmethod
+    def get_monthly_summary(wallet, year: int, month: int):
+        """Get complete monthly savings summary for a wallet."""
+        today = _date.today()
+        goals = wallet.savings_goals.filter(status="active")
+
+        # Mark any missed goals
+        for goal in goals:
+            if goal.target_date < today and goal.status == "active":
+                goal.status = "missed"
+                goal.save()
+
+        # Recalculate active goals
+        active_goals = wallet.savings_goals.filter(status="active")
+        total_monthly_needed = SavingsGoalService.get_total_monthly_needed(
+            active_goals
+        )
+        actual_savings = SavingsGoalService.get_actual_savings(wallet, year, month)
+        difference = actual_savings - total_monthly_needed
+
+        return {
+            "month": month,
+            "year": year,
+            "total_monthly_needed": total_monthly_needed,
+            "actual_savings": actual_savings,
+            "difference": difference,
+            "status": "on_track" if difference >= 0 else "short",
+            "goals": active_goals,
+        }
