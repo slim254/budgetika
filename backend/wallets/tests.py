@@ -758,3 +758,37 @@ class DashboardBaseCurrencyTest(TestCase):
             Decimal(str(response.data["summary"]["total_balance"])),
             Decimal("100.00"),
         )
+
+
+class TransactionSerializerTransferFieldsTest(TestCase):
+    def setUp(self):
+        self.user = User.objects.create_user(username="tfuser", password="pass")
+        self.client = make_client(self.user)
+        self.w1 = Wallet.objects.create(user=self.user, name="Checking", currency="pln", initial_value=Decimal("0"))
+        self.w2 = Wallet.objects.create(user=self.user, name="Savings", currency="pln", initial_value=Decimal("0"))
+
+    def test_transfer_ref_and_peer_wallet_in_transaction_list(self):
+        import uuid
+        ref = uuid.uuid4()
+        debit = Transaction.objects.create(
+            wallet=self.w1, created_by=self.user,
+            note="Transfer", amount=Decimal("-200"), currency="pln",
+            transfer_ref=ref,
+        )
+        credit = Transaction.objects.create(
+            wallet=self.w2, created_by=self.user,
+            note="Transfer", amount=Decimal("200"), currency="pln",
+            transfer_ref=ref,
+        )
+        debit.transfer_peer = credit
+        credit.transfer_peer = debit
+        debit.save(update_fields=["transfer_peer"])
+        credit.save(update_fields=["transfer_peer"])
+
+        url = f"/api/wallets/{self.w1.id}/transactions/"
+        res = self.client.get(url)
+        self.assertEqual(res.status_code, 200)
+        row = res.data[0]
+        self.assertEqual(row["transfer_ref"], str(ref))
+        self.assertIsNotNone(row["peer_wallet"])
+        self.assertEqual(row["peer_wallet"]["name"], "Savings")

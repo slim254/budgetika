@@ -108,7 +108,7 @@ class WalletTransactionList(generics.ListCreateAPIView):
         """
         wallet_id = self.kwargs['wallet_id']
         wallet = get_object_or_404(Wallet, id=wallet_id, user=self.request.user)
-        queryset = Transaction.objects.filter(wallet=wallet)
+        queryset = Transaction.objects.filter(wallet=wallet).select_related('transfer_peer__wallet')
 
         # Get month and year from query parameters, default to current date
         month = self.request.query_params.get('month')

@@ -10,6 +10,8 @@ from .models import (
     BudgetMonthOverride,
 )
 from django.db.models import Sum
+from decimal import Decimal
+from django.utils import timezone
 
 
 class CategorySerializer(serializers.ModelSerializer):
@@ -130,10 +132,12 @@ class TransactionSerializer(serializers.ModelSerializer):
         required=False,
         default=[]
     )
+    peer_wallet = serializers.SerializerMethodField()
 
     class Meta:
         model = Transaction
-        fields = ['note', 'amount', 'currency', 'id', 'date', 'category', 'category_id', 'tags', 'tag_ids']
+        fields = ['note', 'amount', 'currency', 'id', 'date', 'category', 'category_id', 'tags', 'tag_ids', 'transfer_ref', 'peer_wallet']
+        read_only_fields = ['id', 'transfer_ref', 'peer_wallet']
     def validate_category_id(self, value):
         """
         DRF EDUCATIONAL NOTE - Field-Level Validation
@@ -160,6 +164,19 @@ class TransactionSerializer(serializers.ModelSerializer):
             if not UserTransactionTag.objects.filter(id=tag_id, user=user).exists():
                 raise serializers.ValidationError(f"Tag with id {tag_id} not found or doesn't belong to you.")
         return value
+
+    def get_peer_wallet(self, obj):
+        if not obj.transfer_ref or not obj.transfer_peer_id:
+            return None
+        try:
+            peer = obj.transfer_peer
+            return {
+                "id": str(peer.wallet_id),
+                "name": peer.wallet.name,
+                "currency": peer.wallet.currency,
+            }
+        except Exception:
+            return None
 
     def create(self, validated_data):
         """
