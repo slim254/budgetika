@@ -991,6 +991,7 @@ class WalletTransferView(APIView):
 class SavingsGoalViewSet(viewsets.ModelViewSet):
     serializer_class = SavingsGoalSerializer
     permission_classes = [IsAuthenticated]
+    authentication_classes = [JWTAuthentication]
     lookup_field = "pk"
 
     def get_queryset(self):
@@ -1006,8 +1007,8 @@ class SavingsGoalViewSet(viewsets.ModelViewSet):
         try:
             wallet = Wallet.objects.get(id=wallet_id, user=self.request.user)
         except Wallet.DoesNotExist:
-            from rest_framework import serializers
-            raise serializers.ValidationError("Wallet not found or access denied.")
+            from rest_framework.exceptions import ValidationError
+            raise ValidationError("Wallet not found or access denied.")
         serializer.save(wallet=wallet)
 
     def get_serializer_context(self):
@@ -1032,8 +1033,14 @@ class SavingsGoalViewSet(viewsets.ModelViewSet):
         """Get monthly savings summary for a wallet."""
         from datetime import date
 
-        month = int(request.query_params.get("month", 0))
-        year = int(request.query_params.get("year", 0))
+        try:
+            month = int(request.query_params.get("month", 0))
+            year = int(request.query_params.get("year", 0))
+        except (ValueError, TypeError):
+            return Response(
+                {"error": "month and year must be integers"},
+                status=status.HTTP_400_BAD_REQUEST
+            )
 
         if not month or not year:
             today = date.today()
