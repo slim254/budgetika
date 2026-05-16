@@ -38,6 +38,36 @@ class Wallet(models.Model):
         return f"{self.user.username}'s Wallet"
 
 
+class SavingsGoal(models.Model):
+    STATUS_CHOICES = [
+        ("active", "Active"),
+        ("completed", "Completed"),
+        ("missed", "Missed"),
+    ]
+
+    id = models.UUIDField(primary_key=True, default=uuid.uuid4, editable=False)
+    wallet = models.ForeignKey(
+        Wallet, on_delete=models.CASCADE, related_name="savings_goals"
+    )
+    name = models.CharField(max_length=255)
+    target_amount = models.DecimalField(max_digits=12, decimal_places=2)
+    target_date = models.DateField()
+    status = models.CharField(
+        max_length=20, choices=STATUS_CHOICES, default="active"
+    )
+    created_at = models.DateTimeField(auto_now_add=True)
+    updated_at = models.DateTimeField(auto_now=True)
+
+    class Meta:
+        ordering = ["target_date"]
+        indexes = [
+            models.Index(fields=["wallet", "status"]),
+        ]
+
+    def __str__(self):
+        return f"{self.name} ({self.target_date})"
+
+
 class TransactionCategory(models.Model):
     """
     Transaction categories for organizing transactions.
