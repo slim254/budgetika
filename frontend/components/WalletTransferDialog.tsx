@@ -84,13 +84,16 @@ export function WalletTransferDialog({
             setDate(editValues.date.slice(0, 10));
             setNote(editValues.note);
         } else {
-            setToWalletId(otherWallets[0]?.id ?? "");
+            // Only reset toWalletId if not already selected
+            if (!toWalletId && otherWallets.length > 0) {
+                setToWalletId(otherWallets[0].id);
+            }
             setFromAmount("");
             setToAmount("");
             setDate(today);
             setNote("");
         }
-    }, [open, isEdit]);
+    }, [open, isEdit, editValues, otherWallets, today]);
 
     // Auto-fill to_amount via exchange rate with 300ms debounce
     useEffect(() => {
@@ -116,7 +119,7 @@ export function WalletTransferDialog({
         return () => {
             if (rateTimerRef.current) clearTimeout(rateTimerRef.current);
         };
-    }, [fromAmount, date, toWalletId, open]);
+    }, [fromAmount, date, toWalletId, open, isCrossCurrency, toWallet, currentWallet]);
 
     async function handleSave() {
         if (!toWalletId || !fromAmount || !date) {
@@ -129,13 +132,21 @@ export function WalletTransferDialog({
             setError("Amounts must be positive.");
             return;
         }
+
+        // Validate and parse date
+        const dateObj = new Date(date + "T00:00:00Z");
+        if (isNaN(dateObj.getTime())) {
+            setError("Invalid date format");
+            return;
+        }
+
         setSaving(true);
         setError(null);
         try {
             if (isEdit && editTransferRef) {
                 await updateTransfer(editTransferRef, {
                     note,
-                    date: new Date(date).toISOString(),
+                    date: dateObj.toISOString(),
                     from_amount: fa,
                     to_amount: ta,
                 });
@@ -145,15 +156,16 @@ export function WalletTransferDialog({
                     to_wallet: toWalletId,
                     from_amount: fa,
                     to_amount: ta,
-                    date: new Date(date).toISOString(),
+                    date: dateObj.toISOString(),
                     note,
                 };
                 await createTransfer(payload);
             }
             onOpenChange(false);
             onSaved();
-        } catch {
-            setError("Failed to save transfer. Please try again.");
+        } catch (err: any) {
+            const message = err?.response?.data?.detail || "Failed to save transfer. Please try again.";
+            setError(message);
         } finally {
             setSaving(false);
         }
@@ -166,8 +178,9 @@ export function WalletTransferDialog({
             await deleteTransfer(editTransferRef);
             onOpenChange(false);
             onDeleted();
-        } catch {
-            setError("Failed to delete transfer.");
+        } catch (err: any) {
+            const message = err?.response?.data?.detail || "Failed to delete transfer.";
+            setError(message);
         } finally {
             setDeleting(false);
         }
