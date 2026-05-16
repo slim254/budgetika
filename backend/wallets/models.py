@@ -202,6 +202,14 @@ class Transaction(models.Model):
     tags = models.ManyToManyField(
         UserTransactionTag, related_name="transactions", blank=True
     )
+    transfer_ref = models.UUIDField(null=True, blank=True, db_index=True)
+    transfer_peer = models.ForeignKey(
+        'self',
+        null=True,
+        blank=True,
+        on_delete=models.SET_NULL,
+        related_name='transfer_peer_reverse',
+    )
 
     def __str__(self):
         return self.note
