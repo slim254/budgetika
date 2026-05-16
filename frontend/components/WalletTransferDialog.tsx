@@ -1,7 +1,7 @@
 "use client";
 
 import { useState, useEffect, useRef } from "react";
-import { Wallet, Transfer, TransferFormData, Currency } from "@/models/wallets";
+import { Wallet, TransferFormData, Currency } from "@/models/wallets";
 import { createTransfer, updateTransfer, deleteTransfer } from "@/api/transfers";
 import { getExchangeRate } from "@/api/exchangeRates";
 import {
@@ -163,8 +163,8 @@ export function WalletTransferDialog({
             }
             onOpenChange(false);
             onSaved();
-        } catch (err: any) {
-            const message = err?.response?.data?.detail || "Failed to save transfer. Please try again.";
+        } catch (err) {
+            const message = (err as { response?: { data?: { detail?: string } } })?.response?.data?.detail || "Failed to save transfer. Please try again.";
             setError(message);
         } finally {
             setSaving(false);
@@ -178,8 +178,8 @@ export function WalletTransferDialog({
             await deleteTransfer(editTransferRef);
             onOpenChange(false);
             onDeleted();
-        } catch (err: any) {
-            const message = err?.response?.data?.detail || "Failed to delete transfer.";
+        } catch (err) {
+            const message = (err as { response?: { data?: { detail?: string } } })?.response?.data?.detail || "Failed to delete transfer.";
             setError(message);
         } finally {
             setDeleting(false);

@@ -1,7 +1,7 @@
 "use client";
 
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
-import { Wallet as WalletIcon, TrendingUp, TrendingDown, Scale } from "lucide-react";
+import { TrendingUp, TrendingDown, Scale } from "lucide-react";
 import {
   Select,
   SelectContent,

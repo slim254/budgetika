@@ -10,11 +10,11 @@ import { DynamicIcon } from "@/components/IconPicker";
 import { UserMenu } from "@/components/UserMenu";
 import { useParams, useRouter, useSearchParams } from "next/navigation";
 import { useEffect, useRef, useState } from "react";
-import { Wallet, Transaction, Category, Tag, SearchFilters, TransactionSearchResponse, Transfer } from "@/models/wallets";
+import { Wallet, Transaction, Category, Tag, SearchFilters, TransactionSearchResponse } from "@/models/wallets";
 import { TransactionDialog } from "@/components/TransactionDialog";
 import { CSVImportDialog } from "@/components/CSVImportDialog";
 import { WalletTransferDialog } from "@/components/WalletTransferDialog";
-import MonthSelector from "@/components/MonthSelector";
+import DateSelector from "@/components/DateSelector";
 import { formatCurrency } from "@/lib/currency";
 import { TransactionSearch } from "@/components/TransactionSearch";
 import { BudgetPanel } from "@/components/BudgetPanel";
@@ -56,6 +56,11 @@ export default function WalletPage() {
   const month = searchParams.get('month') || String(currentDate.getMonth() + 1).padStart(2, '0');
   const year = searchParams.get('year') || String(currentDate.getFullYear());
 
+  // Date range filtering (alternative to month view)
+  const dateFrom = searchParams.get('date_from') || '';
+  const dateTo = searchParams.get('date_to') || '';
+  const isDateRangeMode = Boolean(dateFrom && dateTo);
+
   async function fetchWallet() {
     try {
       const response = await axiosInstance.get<Wallet>(`wallets/${params.id}/`);
@@ -73,6 +78,18 @@ export default function WalletPage() {
       setTransactions(response.data);
     } catch (error) {
       console.error("Failed to fetch transactions:", error);
+    }
+  }
+
+  async function fetchTransactionsByDateRange(from: string, to: string) {
+    try {
+      const response = await axiosInstance.get<TransactionSearchResponse>(
+        buildSearchUrl("", { category: "", tag: "", date_from: from, date_to: to, min_amount: "", max_amount: "" })
+      );
+      setTransactions(response.data.results);
+      setSearchCursor(extractCursor(response.data.next));
+    } catch (error) {
+      console.error("Failed to fetch transactions by date range:", error);
     }
   }
 
@@ -105,7 +122,11 @@ export default function WalletPage() {
 
   async function loadData() {
     setIsLoading(true);
-    await Promise.all([fetchWallet(), fetchTransactions(), fetchWallets()]);
+    if (isDateRangeMode) {
+      await Promise.all([fetchWallet(), fetchTransactionsByDateRange(dateFrom, dateTo), fetchWallets()]);
+    } else {
+      await Promise.all([fetchWallet(), fetchTransactions(), fetchWallets()]);
+    }
     setIsLoading(false);
   }
 
@@ -177,7 +198,7 @@ export default function WalletPage() {
     if (params.id) {
       loadData();
     }
-  }, [params.id, month, year]);
+  }, [params.id, month, year, dateFrom, dateTo, isDateRangeMode]);
 
   // IntersectionObserver for infinite scroll in search mode
   useEffect(() => {
@@ -267,6 +288,13 @@ export default function WalletPage() {
     fetchSearchResults("", searchParamsRef.current.filters);
   }
 
+  // eslint-disable-next-line @typescript-eslint/no-unused-vars
+  function handleDateChange(params: { month?: string; year?: string; date_from?: string; date_to?: string }) {
+    // The DateSelector component handles URL updates via router.push
+    // This callback is for any additional state updates if needed
+    // Currently, the page will auto-refetch due to month/year/date_from/date_to in useEffect deps
+  }
+
   function handleExitSearchMode() {
     setSearchMode(false);
     setSearchTransactions([]);
@@ -301,6 +329,16 @@ export default function WalletPage() {
   const expenseTotal = transactions
     .filter(t => Number(t.amount) < 0)
     .reduce((sum, t) => sum + Math.abs(Number(t.amount)), 0);
+
+  function getDisplayLabel(): string {
+    if (isDateRangeMode && dateFrom && dateTo) {
+      const from = new Date(dateFrom).toLocaleDateString("default", { month: "short", day: "numeric", year: "numeric" });
+      const to = new Date(dateTo).toLocaleDateString("default", { month: "short", day: "numeric", year: "numeric" });
+      return `${from} – ${to}`;
+    }
+    const monthName = new Date(parseInt(year), parseInt(month) - 1).toLocaleString("default", { month: "long", year: "numeric" });
+    return monthName;
+  }
 
   return (
     <ProtectedRoute>
@@ -398,7 +436,7 @@ export default function WalletPage() {
               </>
             ) : (
               <>
-                <MonthSelector />
+                <DateSelector onDateChange={handleDateChange} />
                 <Button variant="outline" size="sm" onClick={handleEnterSearchMode}>
                   <Search className="mr-2 h-4 w-4" /> Search all transactions
                 </Button>
@@ -406,7 +444,7 @@ export default function WalletPage() {
             )}
           </div>
 
-          {!searchMode && (
+          {!searchMode && !isDateRangeMode && (
             <BudgetPanel
               key={budgetPanelKey}
               walletId={params.id}
@@ -424,7 +462,7 @@ export default function WalletPage() {
                   <CardTitle>
                     {searchMode
                       ? "All transactions"
-                      : `Transactions for ${new Date(parseInt(year), parseInt(month) - 1).toLocaleString("default", { month: "long", year: "numeric" })}`}
+                      : `Transactions for ${getDisplayLabel()}`}
                   </CardTitle>
                   <CardDescription>
                     {searchMode ? "Showing search results across all time" : "Manage your income and expenses"}
