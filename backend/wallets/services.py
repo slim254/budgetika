@@ -799,7 +799,7 @@ class SavingsGoalService:
         return actual.quantize(Decimal("0.01"))
 
     @staticmethod
-    def get_monthly_summary(wallet, year: int, month: int):
+    def get_monthly_summary(wallet: Wallet, year: int, month: int) -> dict:
         """Get complete monthly savings summary for a wallet.
 
         Note: Call mark_missed_goals() separately to update statuses.
