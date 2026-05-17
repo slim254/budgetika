@@ -277,6 +277,7 @@ class WalletSerializer(serializers.ModelSerializer):
     class Meta:
         model = Wallet
         fields = '__all__'
+        read_only_fields = ['user']
 
     def get_balance(self, obj):
         """

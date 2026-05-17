@@ -8,13 +8,15 @@ import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/com
 import { Button } from "@/components/ui/button";
 import { useRouter } from "next/navigation";
 import { useAuthContext } from "@/contexts/AuthProvider";
-import { Wallet as WalletIcon, Plus } from "lucide-react";
+import { Wallet as WalletIcon, Plus, Trash2 } from "lucide-react";
 import { UserMenu } from "@/components/UserMenu";
 import { MetricsSummaryCards } from "@/components/MetricsSummaryCards";
 import { CategoryBreakdown } from "@/components/CategoryBreakdown";
 import { MonthlyTrendChart } from "@/components/MonthlyTrendChart";
 import { formatCurrency, getLocaleCurrency } from "@/lib/currency";
 import { getProfile, patchProfile } from "@/api/profile";
+import { WalletDialog } from "@/components/WalletDialog";
+import { DeleteWalletDialog } from "@/components/DeleteWalletDialog";
 
 export default function DashboardPage() {
     const { session } = useAuthContext();
@@ -22,6 +24,8 @@ export default function DashboardPage() {
     const [dashboard, setDashboard] = useState<UserDashboardResponse | null>(null);
     const [isLoading, setIsLoading] = useState<boolean>(true);
     const [baseCurrency, setBaseCurrency] = useState<Currency>("usd");
+    const [walletDialogOpen, setWalletDialogOpen] = useState(false);
+    const [deleteTarget, setDeleteTarget] = useState<Wallet | null>(null);
     const router = useRouter();
 
     async function fetchDashboard(currency: Currency) {
@@ -106,7 +110,7 @@ export default function DashboardPage() {
                     <div>
                         <div className="flex justify-between items-center mb-6">
                             <h2 className="text-xl font-semibold">Your Wallets</h2>
-                            <Button>
+                            <Button onClick={() => setWalletDialogOpen(true)}>
                                 <Plus className="mr-2 h-4 w-4" />
                                 New Wallet
                             </Button>
@@ -124,7 +128,7 @@ export default function DashboardPage() {
                                         <h3 className="mt-2 text-sm font-medium text-gray-900">No wallets</h3>
                                         <p className="mt-1 text-sm text-gray-500">Get started by creating a new wallet.</p>
                                         <div className="mt-6">
-                                            <Button>
+                                            <Button onClick={() => setWalletDialogOpen(true)}>
                                                 <Plus className="mr-2 h-4 w-4" />
                                                 Create Wallet
                                             </Button>
@@ -143,7 +147,17 @@ export default function DashboardPage() {
                                         <CardHeader>
                                             <CardTitle className="flex items-center justify-between">
                                                 <span>{wallet.name}</span>
-                                                <WalletIcon className="h-5 w-5 text-gray-400" />
+                                                <div className="flex items-center gap-1">
+                                                    <Button
+                                                        variant="ghost"
+                                                        size="icon"
+                                                        className="h-7 w-7 text-gray-400 hover:text-red-500"
+                                                        onClick={(e) => { e.stopPropagation(); setDeleteTarget(wallet); }}
+                                                    >
+                                                        <Trash2 className="h-4 w-4" />
+                                                    </Button>
+                                                    <WalletIcon className="h-5 w-5 text-gray-400" />
+                                                </div>
                                             </CardTitle>
                                             <CardDescription>
                                                 Currency: {wallet.currency.toUpperCase()}
@@ -170,6 +184,20 @@ export default function DashboardPage() {
                     </div>
                 </main>
             </div>
+            <WalletDialog
+                open={walletDialogOpen}
+                onOpenChange={setWalletDialogOpen}
+                onSaved={loadAll}
+            />
+            {deleteTarget && (
+                <DeleteWalletDialog
+                    open={!!deleteTarget}
+                    onOpenChange={(open) => { if (!open) setDeleteTarget(null); }}
+                    walletId={deleteTarget.id}
+                    walletName={deleteTarget.name}
+                    onDeleted={loadAll}
+                />
+            )}
         </ProtectedRoute>
     );
 }

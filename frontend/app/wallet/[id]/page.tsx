@@ -20,6 +20,7 @@ import { TransactionSearch } from "@/components/TransactionSearch";
 import { BudgetPanel } from "@/components/BudgetPanel";
 import { BudgetManagementDialog } from "@/components/BudgetManagementDialog";
 import { SavingsGoalsPanel } from "@/components/SavingsGoalsPanel";
+import { DeleteWalletDialog } from "@/components/DeleteWalletDialog";
 
 export default function WalletPage() {
   const [wallet, setWallet] = useState<Wallet | null>(null);
@@ -36,6 +37,7 @@ export default function WalletPage() {
   const [budgetPanelKey, setBudgetPanelKey] = useState(0);
   const [transferDialogOpen, setTransferDialogOpen] = useState(false);
   const [editingTransfer, setEditingTransfer] = useState<Transaction | null>(null);
+  const [deleteWalletOpen, setDeleteWalletOpen] = useState(false);
 
   // Search mode
   const [searchMode, setSearchMode] = useState(false);
@@ -361,6 +363,14 @@ export default function WalletPage() {
                   onClick={() => router.push(`/wallet/${params.id}/metrics`)}
                 >
                   <BarChart3 className="mr-2 h-4 w-4" /> View metrics
+                </Button>
+                <Button
+                  variant="outline"
+                  size="sm"
+                  className="text-red-600 border-red-200 hover:bg-red-50 hover:text-red-700"
+                  onClick={() => setDeleteWalletOpen(true)}
+                >
+                  <Trash2 className="mr-2 h-4 w-4" /> Delete Wallet
                 </Button>
                 <UserMenu />
               </div>
@@ -721,6 +731,15 @@ export default function WalletPage() {
             date: editingTransfer.date,
             note: editingTransfer.note,
           } : null}
+        />
+      )}
+      {wallet && (
+        <DeleteWalletDialog
+          open={deleteWalletOpen}
+          onOpenChange={setDeleteWalletOpen}
+          walletId={wallet.id}
+          walletName={wallet.name}
+          onDeleted={() => router.push("/dashboard")}
         />
       )}
     </ProtectedRoute>
