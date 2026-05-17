@@ -25,16 +25,17 @@
 
 | # | Feature | Priority | Complexity | Why this order |
 |---|---|---|---|---|
-| 1 | AI Auto-categorization | 3 | 3 | High-frequency action; most tangible AI value. |
-| 2 | AI Receipt Scan | 3 | 3 | Removes manual entry friction; pairs with auto-categorization. |
-| 3 | AI Budget Recommendations | 2 | 2 | Needs spending history; easy follow-on to budget feature. |
-| 4 | AI Chat & Financial Tips | 3 | 4 | Highest perceived value; more complex to do well. |
-| 5 | Toast Messages | 4 | 1 | Cross-cutting UX polish; cheap and high-impact. |
-| 6 | CSV Export | 3 | 1 | Natural complement to CSV import. |
-| 7 | Over-budget Alerts | 3 | 2 | Closes the loop on the budget feature. |
-| 8 | Auth & Account Management | 3 | 3 | Login with username or email, email verification, password reset. |
-| 9 | Feature Flags | 2 | 2 | Enables safe rollout of new features before production. |
-| 10 | Production Readiness | 5 | 5 | Security, compliance, infra hardening before public launch. |
+| 1 | LLM Abstraction & Usage Tracking | 4 | 2 | Prerequisite for all AI features; provider-agnostic layer with per-user token quotas and cost tracking. |
+| 2 | AI Auto-categorization | 3 | 3 | High-frequency action; most tangible AI value. |
+| 3 | AI Receipt Scan | 3 | 3 | Removes manual entry friction; pairs with auto-categorization. |
+| 4 | AI Budget Recommendations | 2 | 2 | Needs spending history; easy follow-on to budget feature. |
+| 5 | AI Chat & Financial Tips | 3 | 4 | Highest perceived value; more complex to do well. |
+| 6 | Toast Messages | 4 | 1 | Cross-cutting UX polish; cheap and high-impact. |
+| 7 | CSV Export | 3 | 1 | Natural complement to CSV import. |
+| 8 | Over-budget Alerts | 3 | 2 | Closes the loop on the budget feature. |
+| 9 | Auth & Account Management | 3 | 3 | Login with username or email, email verification, password reset. |
+| 10 | Feature Flags | 2 | 2 | Enables safe rollout of new features before production. |
+| 11 | Production Readiness | 5 | 5 | Security, compliance, infra hardening before public launch. |
 
 ---
 
@@ -42,7 +43,24 @@
 
 ### AI Features
 
-#### 1. AI Auto-categorization — Priority 3 · Complexity 3
+#### 1. LLM Abstraction & Usage Tracking — Priority 4 · Complexity 2
+
+**What:** A provider-agnostic LLM service layer that all AI features call into, with per-user monthly token quotas, cost tracking, and admin observability.
+
+**Scope:**
+- Backend: `LLMProvider` protocol + `AnthropicAdapter` in `wallets/ai.py`; `AIService.complete()` enforces quotas, logs every call to `AIUsageLog`, and returns usage warnings at configurable thresholds (default: 80% and 95%); global DRF exception handler converts `QuotaExceededError` to HTTP 429
+- Token pricing stored in `ModelPricing` (with `valid_from` date — insert a new row when prices change, never update old ones)
+- Per-user limits in `UserAIQuota` (nullable; null = global default from settings)
+- `GET /api/ai/quota/` endpoint returns current month's usage and limit for the authenticated user
+- Provider is swappable via `settings.AI_DEFAULT_PROVIDER`; additional adapters added by implementing the `LLMProvider` protocol and calling `register_provider()`
+
+**Files:** new `wallets/ai.py`, `wallets/models.py`, `wallets/admin.py`, `wallets/views.py`, `wallets/urls.py`, `config/settings.py`, `config/urls.py`
+
+**Spec & plan:** `docs/superpowers/specs/2026-05-17-llm-abstraction-design.md`, `docs/superpowers/plans/2026-05-17-llm-abstraction.md`
+
+---
+
+#### 2. AI Auto-categorization — Priority 3 · Complexity 3
 
 **What:** When adding a transaction (or importing via CSV), use Claude to suggest a category based on the note text. Also expose a "Categorize all uncategorized" bulk action.
 
@@ -54,7 +72,7 @@
 
 ---
 
-#### 2. AI Receipt Scan — Priority 3 · Complexity 3
+#### 3. AI Receipt Scan — Priority 3 · Complexity 3
 
 **What:** Upload a photo of a receipt; Claude extracts the merchant, amount, date, and category from the image and pre-fills the transaction form.
 
@@ -66,7 +84,7 @@
 
 ---
 
-#### 3. AI Budget Recommendations — Priority 2 · Complexity 2
+#### 4. AI Budget Recommendations — Priority 2 · Complexity 2
 
 **What:** After 2–3 months of spending history, surface suggestions for budget limits: "You typically spend ~€280/mo on dining — want to set that as your budget?" Shown as dismissible cards inside `BudgetPanel` when no budget exists for a category.
 
@@ -78,7 +96,7 @@
 
 ---
 
-#### 4. AI Chat & Financial Tips — Priority 3 · Complexity 4
+#### 5. AI Chat & Financial Tips — Priority 3 · Complexity 4
 
 **What:** A persistent chat panel where users can ask natural-language questions about their finances ("How does this month compare to last?" / "What's my biggest expense this year?") and receive proactive tips ("You're spending 40% more on dining than usual — here are three ways to cut back").
 
