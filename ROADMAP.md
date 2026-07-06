@@ -1,5 +1,10 @@
 # Roadmap
 
+> **Self-Host Program (2026-07-06):** The next work is sequenced for personal self-hosting on a Linux mini PC, split into **MVP** (run it + daily-use polish + AI auto-categorize) and **Later** (auth, feature flags, remaining AI, production hardening). See `HANDOFF.md` for the batch order and `docs/superpowers/specs/2026-07-06-selfhost-feature-completion-design.md` for the design. **AI provider = OpenAI** (the LLM layer is provider-agnostic).
+>
+> **MVP batches:** B0 self-host foundation · B1a future-date bug · B1b finish toast rollout · B1c CSV export · B2 over-budget alerts · B3a LLM layer (OpenAI) · B3b AI auto-categorize.
+> **Corrections found while planning:** `POST /api/register/` was never implemented (docs claimed otherwise — now fixed); toasts are already wired (`<Toaster/>` in `layout.tsx`) so B1b only finishes the rollout.
+
 ## Completed
 
 | Feature | Notes |
@@ -48,7 +53,7 @@
 **What:** A provider-agnostic LLM service layer that all AI features call into, with per-user monthly token quotas, cost tracking, and admin observability.
 
 **Scope:**
-- Backend: `LLMProvider` protocol + `AnthropicAdapter` in `wallets/ai.py`; `AIService.complete()` enforces quotas, logs every call to `AIUsageLog`, and returns usage warnings at configurable thresholds (default: 80% and 95%); global DRF exception handler converts `QuotaExceededError` to HTTP 429
+- Backend: `LLMProvider` protocol + `OpenAIAdapter` in `wallets/ai.py`; `AIService.complete()` enforces quotas, logs every call to `AIUsageLog`, and returns usage warnings at configurable thresholds (default: 80% and 95%); global DRF exception handler converts `QuotaExceededError` to HTTP 429
 - Token pricing stored in `ModelPricing` (with `valid_from` date — insert a new row when prices change, never update old ones)
 - Per-user limits in `UserAIQuota` (nullable; null = global default from settings)
 - `GET /api/ai/quota/` endpoint returns current month's usage and limit for the authenticated user

@@ -97,7 +97,7 @@ POST       /api/wallets/{wallet_id}/import/parse/
 POST       /api/wallets/{wallet_id}/import/execute/
 POST       /api/token/           (login)
 POST       /api/token/refresh/
-POST       /api/register/
+# POST     /api/register/         ⚠️ NOT IMPLEMENTED — planned (Auth batch). Create users via `createsuperuser`.
 ```
 
 ## CSV Import

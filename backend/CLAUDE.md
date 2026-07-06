@@ -45,7 +45,7 @@ JWT via simplejwt. `IsAuthenticated` + `JWTAuthentication` on every view. No ses
 Token endpoints:
 - `POST /api/token/` — obtain (login)
 - `POST /api/token/refresh/` — refresh
-- `POST /api/register/` — register (in `config/views.py`)
+- `POST /api/register/` — ⚠️ **NOT IMPLEMENTED.** Referenced historically but no view/serializer/URL exists. Planned in the Auth batch (see ROADMAP "Later"). Until then, create users with `python manage.py createsuperuser`.
 
 ## View Pattern
 

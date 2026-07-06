@@ -5,7 +5,9 @@
 
 ## Overview
 
-A provider-agnostic LLM abstraction layer for the budgeting app's AI features, with per-user monthly token quotas, cost tracking, and admin observability. First implementation ships with Anthropic only; additional providers are added by dropping in a new adapter class.
+A provider-agnostic LLM abstraction layer for the budgeting app's AI features, with per-user monthly token quotas, cost tracking, and admin observability. First implementation ships with **OpenAI** only; additional providers are added by dropping in a new adapter class.
+
+> **Provider note (2026-07-06):** This spec was originally drafted for Anthropic. The project uses **OpenAI**. The abstraction is provider-agnostic, so only the adapter, the `AI_DEFAULT_PROVIDER`/`AI_MODELS` settings, and the SDK dependency change. All model/service/quota/admin logic is unchanged. Where examples below mention `anthropic`/`claude-*`, read `openai`/`gpt-*`.
 
 ## Data Model
 
@@ -50,16 +52,18 @@ Monthly usage is always computed live from `AIUsageLog` — no stored rollup.
 ## Settings
 
 ```python
-AI_DEFAULT_PROVIDER = "anthropic"
+AI_DEFAULT_PROVIDER = "openai"
 AI_DEFAULT_MONTHLY_TOKENS = 500_000
 AI_WARN_THRESHOLDS = [80, 95]  # percent
 
 AI_MODELS = {
-    "auto_categorize": "claude-haiku-4-5",
-    "receipt_scan": "claude-sonnet-4-6",
-    "budget_recommendations": "claude-haiku-4-5",
-    "chat": "claude-sonnet-4-6",
+    "auto_categorize": "gpt-4o-mini",
+    "receipt_scan": "gpt-4o-mini",
+    "budget_recommendations": "gpt-4o-mini",
+    "chat": "gpt-4o",
 }
+
+OPENAI_API_KEY = env("OPENAI_API_KEY", default="")  # via django-environ (see B0)
 ```
 
 ## Abstraction Layer (`wallets/ai.py`)
@@ -79,7 +83,7 @@ class LLMProvider(Protocol):
 
 ### Adapters
 
-One class per provider. First implementation: `AnthropicAdapter` only. Each adapter wraps the provider SDK and maps the response to `LLMResponse`.
+One class per provider. First implementation: `OpenAIAdapter` only. Each adapter wraps the provider SDK and maps the response to `LLMResponse`.
 
 A provider registry (`dict[str, LLMProvider]`) is populated at app startup from `settings.AI_DEFAULT_PROVIDER`.
 
@@ -137,16 +141,16 @@ Three models registered in `wallets/admin.py`:
 |---|---|
 | `wallets/models.py` | Add `AIUsageLog`, `ModelPricing`, `UserAIQuota` |
 | `wallets/migrations/` | New migration |
-| `wallets/ai.py` | New file: protocol, `AnthropicAdapter`, `AIService` |
+| `wallets/ai.py` | New file: protocol, `OpenAIAdapter`, `AIService` |
 | `wallets/admin.py` | Register 3 new models |
 | `wallets/views.py` | Add `GET /api/ai/quota/` view |
 | `wallets/urls.py` | Wire up quota endpoint |
 | `config/settings.py` | Add AI settings block |
-| `requirements.txt` | Add `anthropic` SDK |
+| `requirements.txt` | Add `openai` SDK |
 
 ## Out of Scope
 
 - Frontend quota warning UI (toast wiring is a frontend concern handled per AI feature)
 - Subscription model / tiered limits (monthly_token_limit is nullable; future subscription feature sets it)
-- Additional provider adapters beyond Anthropic (stubbed by the protocol, added when needed)
+- Additional provider adapters beyond OpenAI (stubbed by the protocol, added when needed)
 - Streaming responses (not needed for any current AI feature)

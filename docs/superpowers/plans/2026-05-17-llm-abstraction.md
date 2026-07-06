@@ -2,11 +2,11 @@
 
 > **For agentic workers:** REQUIRED SUB-SKILL: Use superpowers:subagent-driven-development (recommended) or superpowers:executing-plans to implement this plan task-by-task. Steps use checkbox (`- [ ]`) syntax for tracking.
 
-**Goal:** Add a provider-agnostic LLM abstraction layer with per-user monthly token quotas, cost tracking, and admin observability — starting with Anthropic as the only provider.
+**Goal:** Add a provider-agnostic LLM abstraction layer with per-user monthly token quotas, cost tracking, and admin observability — starting with OpenAI as the only provider.
 
-**Architecture:** A `LLMProvider` protocol and `AnthropicAdapter` live in `wallets/ai.py`. All AI features call `AIService.complete()`, which enforces quotas, logs every call to `AIUsageLog`, and returns a usage warning when the user crosses a configured threshold. Token pricing is stored in `ModelPricing` rows with `valid_from` dates so price changes are non-destructive. A global DRF exception handler converts `QuotaExceededError` to HTTP 429.
+**Architecture:** A `LLMProvider` protocol and `OpenAIAdapter` live in `wallets/ai.py`. All AI features call `AIService.complete()`, which enforces quotas, logs every call to `AIUsageLog`, and returns a usage warning when the user crosses a configured threshold. Token pricing is stored in `ModelPricing` rows with `valid_from` dates so price changes are non-destructive. A global DRF exception handler converts `QuotaExceededError` to HTTP 429.
 
-**Tech Stack:** Django 5.1, DRF, Anthropic Python SDK (`anthropic`), SQLite (dev).
+**Tech Stack:** Django 5.1, DRF, OpenAI Python SDK (`openai`), SQLite (dev).
 
 ---
 
@@ -15,10 +15,10 @@
 | File | Action | Responsibility |
 |---|---|---|
 | `backend/config/settings.py` | Modify | AI settings block (provider, models, quotas, thresholds, API key) |
-| `backend/requirements.txt` | Modify | Add `anthropic` SDK |
+| `backend/requirements.txt` | Modify | Add `openai` SDK |
 | `backend/wallets/models.py` | Modify | Add `AIUsageLog`, `ModelPricing`, `UserAIQuota` |
 | `backend/wallets/migrations/` | Generated | New migration for 3 new models |
-| `backend/wallets/ai.py` | Create | `LLMResponse`, `LLMProvider` protocol, `AnthropicAdapter`, `AIService`, `quota_exception_handler` |
+| `backend/wallets/ai.py` | Create | `LLMResponse`, `LLMProvider` protocol, `OpenAIAdapter`, `AIService`, `quota_exception_handler` |
 | `backend/wallets/views.py` | Modify | Add `AIQuotaView` |
 | `backend/wallets/admin.py` | Modify | Register 3 new models with list display and filters |
 | `backend/config/urls.py` | Modify | Wire `GET /api/ai/quota/` |
@@ -26,7 +26,7 @@
 
 ---
 
-## Task 1: AI Settings and Anthropic Dependency
+## Task 1: AI Settings and OpenAI Dependency
 
 **Files:**
 - Modify: `backend/config/settings.py`
@@ -40,36 +40,39 @@ Add `import os` at the top of the file (after existing imports), then append at 
 
 ```python
 # AI / LLM settings
-AI_DEFAULT_PROVIDER = "anthropic"
+AI_DEFAULT_PROVIDER = "openai"
 AI_DEFAULT_MONTHLY_TOKENS = 500_000
 AI_WARN_THRESHOLDS = [80, 95]  # percent
 
 AI_MODELS = {
-    "auto_categorize": "claude-haiku-4-5-20251001",
-    "receipt_scan": "claude-sonnet-4-6",
-    "budget_recommendations": "claude-haiku-4-5-20251001",
-    "chat": "claude-sonnet-4-6",
+    "auto_categorize": "gpt-4o-mini",
+    "receipt_scan": "gpt-4o-mini",
+    "budget_recommendations": "gpt-4o-mini",
+    "chat": "gpt-4o",
 }
 
-ANTHROPIC_API_KEY = os.environ.get("ANTHROPIC_API_KEY", "")
+# If B0 (self-host foundation) already migrated settings to django-environ,
+# prefer:  OPENAI_API_KEY = env("OPENAI_API_KEY", default="")
+# os.environ.get works standalone if B0 has not run yet:
+OPENAI_API_KEY = os.environ.get("OPENAI_API_KEY", "")
 ```
 
-- [ ] **Step 2: Add `anthropic` to `backend/requirements.txt`**
+- [ ] **Step 2: Add `openai` to `backend/requirements.txt`**
 
 Append:
 ```
-anthropic
+openai
 ```
 
 - [ ] **Step 3: Install the package**
 
 ```bash
 cd backend && source venv/bin/activate
-pip install anthropic
-pip freeze | grep anthropic
+pip install openai
+pip freeze | grep openai
 ```
 
-Expected output: a line like `anthropic==0.x.x`
+Expected output: a line like `openai==1.x.x`
 
 Update `requirements.txt` with the pinned version from that output.
 
@@ -77,7 +80,7 @@ Update `requirements.txt` with the pinned version from that output.
 
 ```bash
 git add backend/config/settings.py backend/requirements.txt
-git commit -m "chore: add AI settings and anthropic dependency"
+git commit -m "chore: add AI settings and openai dependency"
 ```
 
 ---
@@ -104,20 +107,20 @@ from wallets.models import AIUsageLog, ModelPricing, UserAIQuota
 class TestModelPricing(TestCase):
     def test_get_current_returns_most_recent_valid_row(self):
         ModelPricing.objects.create(
-            provider="anthropic", model="claude-haiku-4-5-20251001",
+            provider="openai", model="gpt-4o-mini",
             input_cost=Decimal("0.25"), output_cost=Decimal("1.25"),
             valid_from=date(2025, 1, 1),
         )
         ModelPricing.objects.create(
-            provider="anthropic", model="claude-haiku-4-5-20251001",
+            provider="openai", model="gpt-4o-mini",
             input_cost=Decimal("0.20"), output_cost=Decimal("1.00"),
             valid_from=date(2026, 1, 1),
         )
-        pricing = ModelPricing.get_current("anthropic", "claude-haiku-4-5-20251001")
+        pricing = ModelPricing.get_current("openai", "gpt-4o-mini")
         self.assertEqual(pricing.input_cost, Decimal("0.20"))
 
     def test_get_current_returns_none_when_no_matching_pricing(self):
-        result = ModelPricing.get_current("anthropic", "unknown-model")
+        result = ModelPricing.get_current("openai", "unknown-model")
         self.assertIsNone(result)
 
 
@@ -128,8 +131,8 @@ class TestAIUsageLog(TestCase):
     def test_create_log_entry_without_cost(self):
         log = AIUsageLog.objects.create(
             user=self.user,
-            provider="anthropic",
-            model="claude-haiku-4-5-20251001",
+            provider="openai",
+            model="gpt-4o-mini",
             feature="auto_categorize",
             input_tokens=100,
             output_tokens=50,
@@ -143,8 +146,8 @@ class TestAIUsageLog(TestCase):
     def test_create_log_entry_with_cost(self):
         log = AIUsageLog.objects.create(
             user=self.user,
-            provider="anthropic",
-            model="claude-haiku-4-5-20251001",
+            provider="openai",
+            model="gpt-4o-mini",
             feature="auto_categorize",
             input_tokens=100,
             output_tokens=50,
@@ -289,11 +292,11 @@ def mock_provider():
 
 
 @override_settings(
-    AI_DEFAULT_PROVIDER="anthropic",
+    AI_DEFAULT_PROVIDER="openai",
     AI_DEFAULT_MONTHLY_TOKENS=1000,
     AI_WARN_THRESHOLDS=[80, 95],
-    AI_MODELS={"auto_categorize": "claude-haiku-4-5-20251001"},
-    ANTHROPIC_API_KEY="test-key",
+    AI_MODELS={"auto_categorize": "gpt-4o-mini"},
+    OPENAI_API_KEY="test-key",
 )
 class TestAIService(TestCase):
     def setUp(self):
@@ -312,12 +315,12 @@ class TestAIService(TestCase):
         self.assertEqual(log.input_tokens, 100)
         self.assertEqual(log.output_tokens, 20)
         self.assertEqual(log.feature, "auto_categorize")
-        self.assertEqual(log.provider, "anthropic")
-        self.assertEqual(log.model, "claude-haiku-4-5-20251001")
+        self.assertEqual(log.provider, "openai")
+        self.assertEqual(log.model, "gpt-4o-mini")
 
     def test_complete_raises_when_quota_exceeded(self):
         AIUsageLog.objects.create(
-            user=self.user, provider="anthropic", model="claude-haiku-4-5-20251001",
+            user=self.user, provider="openai", model="gpt-4o-mini",
             feature="auto_categorize", input_tokens=1000, output_tokens=0,
         )
         with patch("wallets.ai.get_provider", return_value=mock_provider()):
@@ -329,7 +332,7 @@ class TestAIService(TestCase):
     def test_complete_returns_warning_when_usage_crosses_threshold(self):
         # Pre-load 750 tokens (75%); call adds 120 → 870/1000 = 87% → triggers 80% threshold
         AIUsageLog.objects.create(
-            user=self.user, provider="anthropic", model="claude-haiku-4-5-20251001",
+            user=self.user, provider="openai", model="gpt-4o-mini",
             feature="auto_categorize", input_tokens=750, output_tokens=0,
         )
         _, warning = self._call()
@@ -343,7 +346,7 @@ class TestAIService(TestCase):
 
     def test_complete_computes_cost_from_model_pricing(self):
         ModelPricing.objects.create(
-            provider="anthropic", model="claude-haiku-4-5-20251001",
+            provider="openai", model="gpt-4o-mini",
             input_cost=Decimal("0.25"), output_cost=Decimal("1.25"),
             valid_from=date(2025, 1, 1),
         )
@@ -360,7 +363,7 @@ class TestAIService(TestCase):
     def test_complete_respects_per_user_quota(self):
         UserAIQuota.objects.create(user=self.user, monthly_token_limit=50)
         AIUsageLog.objects.create(
-            user=self.user, provider="anthropic", model="claude-haiku-4-5-20251001",
+            user=self.user, provider="openai", model="gpt-4o-mini",
             feature="auto_categorize", input_tokens=50, output_tokens=0,
         )
         with patch("wallets.ai.get_provider", return_value=mock_provider()):
@@ -371,7 +374,7 @@ class TestAIService(TestCase):
 
     def test_get_quota_status_returns_correct_data(self):
         AIUsageLog.objects.create(
-            user=self.user, provider="anthropic", model="claude-haiku-4-5-20251001",
+            user=self.user, provider="openai", model="gpt-4o-mini",
             feature="auto_categorize", input_tokens=300, output_tokens=100,
         )
         status = self.service.get_quota_status(self.user)
@@ -437,24 +440,27 @@ class LLMProvider(Protocol):
     def complete(self, messages: list[dict], model: str) -> LLMResponse: ...
 
 
-class AnthropicAdapter:
+class OpenAIAdapter:
     def complete(self, messages: list[dict], model: str) -> LLMResponse:
-        import anthropic
-        client = anthropic.Anthropic(api_key=settings.ANTHROPIC_API_KEY)
-        response = client.messages.create(
+        from openai import OpenAI
+        client = OpenAI(api_key=settings.OPENAI_API_KEY)
+        # NOTE: gpt-4o / gpt-4o-mini accept `max_tokens`. If you later switch a
+        # feature to an o-series reasoning model, rename this to
+        # `max_completion_tokens` (those models reject `max_tokens`).
+        response = client.chat.completions.create(
             model=model,
             max_tokens=1024,
             messages=messages,
         )
         return LLMResponse(
-            content=response.content[0].text,
-            input_tokens=response.usage.input_tokens,
-            output_tokens=response.usage.output_tokens,
+            content=response.choices[0].message.content,
+            input_tokens=response.usage.prompt_tokens,
+            output_tokens=response.usage.completion_tokens,
         )
 
 
 _PROVIDERS: dict[str, LLMProvider] = {
-    "anthropic": AnthropicAdapter(),
+    "openai": OpenAIAdapter(),
 }
 
 
@@ -541,7 +547,7 @@ class AIService:
         provider: str | None = None,
     ) -> tuple[LLMResponse, dict | None]:
         provider = provider or settings.AI_DEFAULT_PROVIDER
-        model = model or settings.AI_MODELS.get(feature, "claude-haiku-4-5-20251001")
+        model = model or settings.AI_MODELS.get(feature, "gpt-4o-mini")
 
         used = self._get_monthly_usage(user)
         limit = self._get_limit(user)
@@ -598,7 +604,7 @@ Expected: `Ran 10 tests in Xs ... OK`
 
 ```bash
 git add backend/wallets/ai.py backend/config/settings.py backend/tests/wallets/test_ai.py
-git commit -m "feat: add AIService, AnthropicAdapter, and quota exception handler"
+git commit -m "feat: add AIService, OpenAIAdapter, and quota exception handler"
 ```
 
 ---
@@ -632,7 +638,7 @@ def make_auth_client(user):
 @override_settings(
     AI_DEFAULT_MONTHLY_TOKENS=1000,
     AI_WARN_THRESHOLDS=[80, 95],
-    ANTHROPIC_API_KEY="test-key",
+    OPENAI_API_KEY="test-key",
 )
 class TestAIQuotaEndpoint(TestCase):
     def setUp(self):
@@ -641,7 +647,7 @@ class TestAIQuotaEndpoint(TestCase):
 
     def test_returns_current_usage_and_limit(self):
         AIUsageLog.objects.create(
-            user=self.user, provider="anthropic", model="claude-haiku-4-5-20251001",
+            user=self.user, provider="openai", model="gpt-4o-mini",
             feature="auto_categorize", input_tokens=300, output_tokens=100,
         )
         response = self.client.get("/api/ai/quota/")
@@ -798,10 +804,12 @@ git commit -m "feat: register AI models in Django admin"
 
 **Adding initial token prices via Django admin** (`/admin`):
 
-Create a `ModelPricing` row for each model before first use. Example (Claude Haiku as of 2025):
-- Provider: `anthropic`, Model: `claude-haiku-4-5-20251001`
-- Input cost: `0.80` (per 1M tokens), Output cost: `4.00` (per 1M tokens)
+Create a `ModelPricing` row for each model before first use. Example (OpenAI `gpt-4o-mini` — **verify current pricing at platform.openai.com/docs/pricing before entering**):
+- Provider: `openai`, Model: `gpt-4o-mini`
+- Input cost: `0.15` (per 1M tokens), Output cost: `0.60` (per 1M tokens)
 - Valid from: today's date
+
+Without a `ModelPricing` row, calls still work — `cost_usd` is logged as `NULL`. Add the row when you want dollar tracking.
 
 **Calling `AIService` from a new AI feature view:**
 
