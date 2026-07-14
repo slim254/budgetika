@@ -16,9 +16,12 @@ from .views import (
     BudgetSummaryView,
     WalletTransferView,
     SavingsGoalViewSet,
+    CategorizeView,
 )
 
 urlpatterns = [
+    path('categorize/', CategorizeView.as_view(), name='categorize'),
+
     # Wallet routes
     path('', WalletList.as_view(), name='wallet-list'),
     path('<uuid:wallet_id>/', WalletDetail.as_view(), name='wallet-detail'),

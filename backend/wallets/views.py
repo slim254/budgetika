@@ -1124,3 +1124,38 @@ class AIQuotaView(APIView):
 
     def get(self, request):
         return Response(ai_service.get_quota_status(request.user))
+
+
+class CategorizeView(APIView):
+    """POST /api/wallets/categorize/  {"note": "..."} -> best-matching user category."""
+    permission_classes = [IsAuthenticated]
+    authentication_classes = [JWTAuthentication]
+
+    def post(self, request):
+        note = (request.data.get("note") or "").strip()
+        if not note:
+            return Response({"detail": "note is required"}, status=400)
+
+        categories = list(
+            TransactionCategory.objects.filter(
+                user=request.user, is_archived=False, is_visible=True
+            )
+        )
+        names = [c.name for c in categories]
+        system = (
+            "You categorize personal-finance transactions. Given a short note, "
+            "reply with EXACTLY ONE category name chosen verbatim from this list, "
+            "or 'Uncategorized' if none fit. Reply with only the category name.\n"
+            f"Categories: {', '.join(names) if names else '(none)'}"
+        )
+        messages = [
+            {"role": "system", "content": system},
+            {"role": "user", "content": note},
+        ]
+        # QuotaExceededError -> HTTP 429 via the global handler from B3a.
+        response, warning = ai_service.complete(request.user, "auto_categorize", messages)
+
+        guess = (response.content or "").strip().strip('".')
+        match = next((c for c in categories if c.name.lower() == guess.lower()), None)
+        suggestion = {"id": str(match.id), "name": match.name} if match else None
+        return Response({"suggestion": suggestion, "usage_warning": warning})
