@@ -422,3 +422,55 @@ class UserProfile(models.Model):
 
     def __str__(self):
         return f"{self.user.username}'s profile"
+
+
+class ModelPricing(models.Model):
+    id = models.UUIDField(primary_key=True, default=uuid.uuid4, editable=False)
+    provider = models.CharField(max_length=50)
+    model = models.CharField(max_length=100)
+    input_cost = models.DecimalField(max_digits=12, decimal_places=8)
+    output_cost = models.DecimalField(max_digits=12, decimal_places=8)
+    valid_from = models.DateField()
+
+    class Meta:
+        ordering = ["-valid_from"]
+        unique_together = [["provider", "model", "valid_from"]]
+
+    @classmethod
+    def get_current(cls, provider: str, model: str):
+        from django.utils import timezone
+        today = timezone.now().date()
+        return (
+            cls.objects.filter(provider=provider, model=model, valid_from__lte=today)
+            .order_by("-valid_from")
+            .first()
+        )
+
+
+FEATURE_CHOICES = [
+    ("auto_categorize", "Auto Categorize"),
+    ("receipt_scan", "Receipt Scan"),
+    ("budget_recommendations", "Budget Recommendations"),
+    ("chat", "Chat"),
+]
+
+
+class AIUsageLog(models.Model):
+    id = models.UUIDField(primary_key=True, default=uuid.uuid4, editable=False)
+    user = models.ForeignKey(User, on_delete=models.CASCADE, related_name="ai_usage_logs")
+    provider = models.CharField(max_length=50)
+    model = models.CharField(max_length=100)
+    feature = models.CharField(max_length=50, choices=FEATURE_CHOICES)
+    input_tokens = models.PositiveIntegerField()
+    output_tokens = models.PositiveIntegerField()
+    cost_usd = models.DecimalField(max_digits=12, decimal_places=8, null=True, blank=True)
+    created_at = models.DateTimeField(auto_now_add=True)
+
+    class Meta:
+        ordering = ["-created_at"]
+
+
+class UserAIQuota(models.Model):
+    id = models.UUIDField(primary_key=True, default=uuid.uuid4, editable=False)
+    user = models.OneToOneField(User, on_delete=models.CASCADE, related_name="ai_quota")
+    monthly_token_limit = models.PositiveIntegerField(null=True, blank=True)
