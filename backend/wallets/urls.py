@@ -6,7 +6,7 @@ from .views import (
     UserCategoryList, UserCategoryDetail,
     UserTagList, UserTagDetail,
     TransactionDetail, TransactionCreate,
-    CSVParseView, CSVExecuteView,
+    CSVParseView, CSVExecuteView, CSVExportView,
     WalletMetrics,
     UserRecurringTransactionList,
     WalletRecurringTransactionList, WalletRecurringTransactionDetail,
@@ -45,6 +45,7 @@ urlpatterns = [
     # CSV import routes
     path('<uuid:wallet_id>/import/parse/', CSVParseView.as_view(), name='csv-import-parse'),
     path('<uuid:wallet_id>/import/execute/', CSVExecuteView.as_view(), name='csv-import-execute'),
+    path('<uuid:wallet_id>/export/', CSVExportView.as_view(), name='csv-export'),
 
     # Recurring transaction routes
     path('recurring/', UserRecurringTransactionList.as_view(), name='user-recurring-list'),

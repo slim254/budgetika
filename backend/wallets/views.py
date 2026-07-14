@@ -1,9 +1,11 @@
 from datetime import datetime, date
 from decimal import Decimal
+import csv
 from django.db.models import F, Sum, DecimalField, Q
 from django.db.models.functions import Coalesce
 from django.shortcuts import get_object_or_404
 from django.db import transaction as db_transaction
+from django.http import HttpResponse
 from rest_framework import generics, viewsets, status
 from rest_framework.pagination import CursorPagination
 from rest_framework.decorators import action
@@ -554,6 +556,42 @@ class CSVExecuteView(APIView):
             return Response(result)
         else:
             return Response(result, status=status.HTTP_400_BAD_REQUEST)
+
+
+class CSVExportView(APIView):
+    """GET /api/wallets/{wallet_id}/export/?month=M&year=Y — download transactions as CSV."""
+    permission_classes = [IsAuthenticated]
+    authentication_classes = [JWTAuthentication]
+
+    def get(self, request, wallet_id):
+        wallet = get_object_or_404(Wallet, id=wallet_id, user=request.user)
+        qs = (
+            Transaction.objects.filter(wallet=wallet)
+            .select_related("category")
+            .prefetch_related("tags")
+            .order_by("-date")
+        )
+        month = request.query_params.get("month")
+        year = request.query_params.get("year")
+        if month and year:
+            qs = qs.filter(date__month=month, date__year=year)
+
+        response = HttpResponse(content_type="text/csv")
+        safe_name = "".join(c for c in wallet.name if c.isalnum() or c in ("-", "_")) or "wallet"
+        response["Content-Disposition"] = f'attachment; filename="{safe_name}_transactions.csv"'
+
+        writer = csv.writer(response)
+        writer.writerow(["date", "amount", "currency", "note", "category", "tags"])
+        for t in qs:
+            writer.writerow([
+                t.date.isoformat(),
+                t.amount,
+                t.currency,
+                t.note,
+                t.category.name if t.category else "",
+                ";".join(tag.name for tag in t.tags.all()),
+            ])
+        return response
 
 
 class UserDashboard(APIView):
