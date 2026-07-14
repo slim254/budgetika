@@ -12,20 +12,28 @@ https://docs.djangoproject.com/en/5.1/ref/settings/
 
 from pathlib import Path
 
+import environ
+
 # Build paths inside the project like this: BASE_DIR / 'subdir'.
 BASE_DIR = Path(__file__).resolve().parent.parent
 
+# django-environ: read .env if present. Every value has a dev-safe fallback so
+# the app boots with no .env (tests/CI).
+env = environ.Env(
+    DEBUG=(bool, True),
+)
+environ.Env.read_env(BASE_DIR / ".env")
 
-# Quick-start development settings - unsuitable for production
-# See https://docs.djangoproject.com/en/5.1/howto/deployment/checklist/
+# SECURITY WARNING: keep the secret key secret in production (set via .env).
+SECRET_KEY = env(
+    "SECRET_KEY",
+    default="django-insecure-dev-only-CHANGE-ME-via-dotenv",
+)
 
-# SECURITY WARNING: keep the secret key used in production secret!
-SECRET_KEY = 'django-insecure-_6la#*i5&!89l-k21ls)eo$2)t(*60#y(5ea-yz4&bcv7dp_zd'
+# SECURITY WARNING: don't run with debug turned on in production.
+DEBUG = env.bool("DEBUG", default=True)
 
-# SECURITY WARNING: don't run with debug turned on in production!
-DEBUG = True
-
-ALLOWED_HOSTS = []
+ALLOWED_HOSTS = env.list("ALLOWED_HOSTS", default=["localhost", "127.0.0.1"])
 
 
 # Application definition
@@ -85,11 +93,12 @@ WSGI_APPLICATION = 'config.wsgi.application'
 # Database
 # https://docs.djangoproject.com/en/5.1/ref/settings/#databases
 
+# Database — SQLite by default; override with DATABASE_URL (e.g. postgres://...)
 DATABASES = {
-    'default': {
-        'ENGINE': 'django.db.backends.sqlite3',
-        'NAME': BASE_DIR / 'db.sqlite3',
-    }
+    "default": env.db_url(
+        "DATABASE_URL",
+        default=f"sqlite:///{BASE_DIR / 'db.sqlite3'}",
+    )
 }
 
 
@@ -134,4 +143,11 @@ STATIC_URL = 'static/'
 
 DEFAULT_AUTO_FIELD = 'django.db.models.BigAutoField'
 
-CORS_ALLOW_ALL_ORIGINS = True
+# CORS — explicit allowlist (no more allow-all). Add the mini-PC LAN origin via .env.
+CORS_ALLOWED_ORIGINS = env.list(
+    "CORS_ALLOWED_ORIGINS",
+    default=["http://localhost:3000", "http://127.0.0.1:3000"],
+)
+
+# OpenAI (used by the AI batches; harmless if unset)
+OPENAI_API_KEY = env("OPENAI_API_KEY", default="")
