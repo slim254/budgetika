@@ -1,7 +1,12 @@
 import axios from "axios";
 
+// Configurable so the app works over LAN on the mini PC.
+// Set NEXT_PUBLIC_API_URL in frontend/.env.local (must end with a trailing slash).
+export const API_URL =
+  process.env.NEXT_PUBLIC_API_URL ?? "http://localhost:8000/api/";
+
 export const axiosInstance = axios.create({
-  baseURL: "http://localhost:8000/api/",
+  baseURL: API_URL,
 });
 
 // Request interceptor: Add auth token to all requests
@@ -41,7 +46,7 @@ axiosInstance.interceptors.response.use(
         if (tokenStr) {
           const token = JSON.parse(tokenStr);
           if (token?.refresh) {
-            const response = await fetch("http://localhost:8000/api/token/refresh/", {
+            const response = await fetch(`${API_URL}token/refresh/`, {
               method: "POST",
               headers: { "Content-Type": "application/json" },
               body: JSON.stringify({ refresh: token.refresh }),
