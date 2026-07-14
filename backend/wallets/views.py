@@ -1065,3 +1065,15 @@ class SavingsGoalViewSet(viewsets.ModelViewSet):
             "goals": goals_serialized,
         }
         return Response(response_data, status=status.HTTP_200_OK)
+
+
+from rest_framework.permissions import AllowAny
+
+
+class HealthView(APIView):
+    """Unauthenticated liveness probe for monitoring / systemd health checks."""
+    permission_classes = [AllowAny]
+    authentication_classes = []
+
+    def get(self, request):
+        return Response({"status": "ok"})
