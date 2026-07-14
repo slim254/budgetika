@@ -138,6 +138,13 @@ class TransactionSerializer(serializers.ModelSerializer):
         default=[]
     )
     peer_wallet = serializers.SerializerMethodField()
+    # Accept both full ISO-8601 datetimes and date-only strings ("YYYY-MM-DD"),
+    # which is what the frontend date picker sends. Without "%Y-%m-%d" here,
+    # DRF's default DateTimeField rejects date-only input.
+    date = serializers.DateTimeField(
+        required=False,
+        input_formats=["iso-8601", "%Y-%m-%d"],
+    )
 
     class Meta:
         model = Transaction
