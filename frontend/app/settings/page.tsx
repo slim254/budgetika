@@ -3,6 +3,7 @@
 import { useEffect, useState } from "react";
 import { useRouter } from "next/navigation";
 import { axiosInstance } from "@/api/axiosInstance";
+import { toast } from "sonner";
 import ProtectedRoute from "@/components/ProtectedRoute";
 import { UserMenu } from "@/components/UserMenu";
 import { Button } from "@/components/ui/button";
@@ -109,8 +110,10 @@ export default function SettingsPage() {
         is_visible: !category.is_visible,
       });
       await fetchCategories();
+      toast.success("Saved");
     } catch (error) {
       console.error("Failed to toggle visibility:", error);
+      toast.error("Something went wrong");
     }
   }
 
@@ -122,9 +125,11 @@ export default function SettingsPage() {
     try {
       await axiosInstance.delete(`wallets/categories/${category.id}/`);
       await fetchCategories();
+      toast.success("Deleted");
     } catch (error) {
       console.error("Failed to delete category:", error);
       alert("Failed to delete category. Please try again.");
+      toast.error("Something went wrong");
     }
   }
 
@@ -151,9 +156,11 @@ export default function SettingsPage() {
       }
       setCategoryDialogOpen(false);
       await fetchCategories();
+      toast.success("Saved");
     } catch (error) {
       console.error("Failed to save category:", error);
       setCategoryError("Failed to save category. Please try again.");
+      toast.error("Something went wrong");
     } finally {
       setIsSavingCategory(false);
     }
@@ -184,8 +191,10 @@ export default function SettingsPage() {
         is_visible: !tag.is_visible,
       });
       await fetchTags();
+      toast.success("Saved");
     } catch (error) {
       console.error("Failed to toggle visibility:", error);
+      toast.error("Something went wrong");
     }
   }
 
@@ -197,9 +206,11 @@ export default function SettingsPage() {
     try {
       await axiosInstance.delete(`wallets/tags/${tag.id}/`);
       await fetchTags();
+      toast.success("Deleted");
     } catch (error) {
       console.error("Failed to delete tag:", error);
       alert("Failed to delete tag. Please try again.");
+      toast.error("Something went wrong");
     }
   }
 
@@ -226,9 +237,11 @@ export default function SettingsPage() {
       }
       setTagDialogOpen(false);
       await fetchTags();
+      toast.success("Saved");
     } catch (error) {
       console.error("Failed to save tag:", error);
       setTagError("Failed to save tag. Please try again.");
+      toast.error("Something went wrong");
     } finally {
       setIsSavingTag(false);
     }

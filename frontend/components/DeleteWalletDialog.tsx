@@ -2,6 +2,7 @@
 
 import { useState } from "react";
 import { axiosInstance } from "@/api/axiosInstance";
+import { toast } from "sonner";
 import {
     Dialog,
     DialogContent,
@@ -33,10 +34,12 @@ export function DeleteWalletDialog({
         setError(null);
         try {
             await axiosInstance.delete(`wallets/${walletId}/`);
+            toast.success("Wallet deleted");
             onOpenChange(false);
             onDeleted();
         } catch {
             setError("Failed to delete wallet. Please try again.");
+            toast.error("Failed to delete wallet");
         } finally {
             setDeleting(false);
         }

@@ -3,6 +3,7 @@
 import { useState, useEffect } from "react";
 import { axiosInstance } from "@/api/axiosInstance";
 import { WalletFormData, Currency } from "@/models/wallets";
+import { toast } from "sonner";
 import {
     Dialog,
     DialogContent,
@@ -60,12 +61,14 @@ export function WalletDialog({ open, onOpenChange, onSaved }: WalletDialogProps)
         try {
             const payload: WalletFormData = { name: name.trim(), initial_value: iv, currency };
             await axiosInstance.post("wallets/", payload);
+            toast.success("Wallet created");
             onOpenChange(false);
             onSaved();
         } catch (err) {
             const data = (err as { response?: { data?: Record<string, string[]> } })?.response?.data;
             const msg = data ? Object.values(data).flat().join(" ") : "Failed to create wallet.";
             setError(msg);
+            toast.error("Failed to save wallet");
         } finally {
             setSaving(false);
         }

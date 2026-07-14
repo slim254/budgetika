@@ -2,6 +2,7 @@
 
 import { useState, useRef } from "react";
 import { axiosInstance } from "@/api/axiosInstance";
+import { toast } from "sonner";
 import {
   CSVParseResponse,
   CSVColumnMapping,
@@ -177,10 +178,12 @@ export function CSVImportDialog({
         setStep("mapping");
       } else {
         setError(response.data.error || "Failed to parse CSV");
+        toast.error("Import failed");
       }
     } catch (err) {
       console.error("Failed to parse CSV:", err);
       setError("Failed to parse CSV file. Please check the format.");
+      toast.error("Import failed");
     } finally {
       setIsLoading(false);
     }
@@ -313,6 +316,7 @@ export function CSVImportDialog({
     } catch (err) {
       console.error("Failed to execute import:", err);
       setError("Failed to import transactions. Please try again.");
+      toast.error("Import failed");
     } finally {
       setIsLoading(false);
     }

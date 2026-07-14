@@ -2,6 +2,7 @@
 
 import { useCallback, useEffect, useState } from "react";
 import { Trash2, Plus } from "lucide-react";
+import { toast } from "sonner";
 import {
   Dialog,
   DialogContent,
@@ -149,12 +150,14 @@ export function BudgetManagementDialog({
       setEditingRuleId(null);
       loadData();
       onChanged();
+      toast.success("Budget saved");
     } catch (err: unknown) {
       const msg =
         (err as { response?: { data?: unknown } })?.response?.data;
       setRuleError(
         typeof msg === "string" ? msg : "Failed to save rule. Check for overlapping date ranges."
       );
+      toast.error("Failed to save budget");
     } finally {
       setRuleSaving(false);
     }
@@ -165,10 +168,12 @@ export function BudgetManagementDialog({
     setDeleteError(null);
     try {
       await deleteBudgetRule(walletId, ruleId);
+      toast.success("Budget removed");
       loadData();
       onChanged();
     } catch {
       setDeleteError("Failed to delete rule. Please try again.");
+      toast.error("Failed to save budget");
     }
   }
 

@@ -4,6 +4,7 @@ import { useState, useEffect, useRef } from "react";
 import { Wallet, TransferFormData, Currency } from "@/models/wallets";
 import { createTransfer, updateTransfer, deleteTransfer } from "@/api/transfers";
 import { getExchangeRate } from "@/api/exchangeRates";
+import { toast } from "sonner";
 import {
     Dialog,
     DialogContent,
@@ -150,6 +151,7 @@ export function WalletTransferDialog({
                     from_amount: fa,
                     to_amount: ta,
                 });
+                toast.success("Transfer updated");
             } else {
                 const payload: TransferFormData = {
                     from_wallet: currentWalletId,
@@ -160,12 +162,14 @@ export function WalletTransferDialog({
                     note,
                 };
                 await createTransfer(payload);
+                toast.success("Transfer saved");
             }
             onOpenChange(false);
             onSaved();
         } catch (err) {
             const message = (err as { response?: { data?: { detail?: string } } })?.response?.data?.detail || "Failed to save transfer. Please try again.";
             setError(message);
+            toast.error("Failed to save transfer");
         } finally {
             setSaving(false);
         }
@@ -176,11 +180,13 @@ export function WalletTransferDialog({
         setDeleting(true);
         try {
             await deleteTransfer(editTransferRef);
+            toast.success("Transfer deleted");
             onOpenChange(false);
             onDeleted();
         } catch (err) {
             const message = (err as { response?: { data?: { detail?: string } } })?.response?.data?.detail || "Failed to delete transfer.";
             setError(message);
+            toast.error("Failed to save transfer");
         } finally {
             setDeleting(false);
         }
