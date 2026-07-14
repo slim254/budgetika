@@ -54,7 +54,8 @@ INSTALLED_APPS = [
 REST_FRAMEWORK = {
     'DEFAULT_AUTHENTICATION_CLASSES': (
         'rest_framework_simplejwt.authentication.JWTAuthentication',
-    )
+    ),
+    'EXCEPTION_HANDLER': 'wallets.ai.quota_exception_handler',
 }
 
 MIDDLEWARE = [
