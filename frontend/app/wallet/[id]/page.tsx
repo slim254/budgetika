@@ -5,7 +5,7 @@ import ProtectedRoute from "@/components/ProtectedRoute";
 import { Button } from "@/components/ui/button";
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/components/ui/card";
 import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from "@/components/ui/table";
-import { ArrowLeft, Plus, Edit, Trash2, TrendingUp, TrendingDown, Upload, BarChart3, Search, ArrowLeftRight } from "lucide-react";
+import { ArrowLeft, Plus, Edit, Trash2, TrendingUp, TrendingDown, Upload, BarChart3, Search, ArrowLeftRight, Download } from "lucide-react";
 import { DynamicIcon } from "@/components/IconPicker";
 import { UserMenu } from "@/components/UserMenu";
 import { useParams, useRouter, useSearchParams } from "next/navigation";
@@ -21,6 +21,8 @@ import { BudgetPanel } from "@/components/BudgetPanel";
 import { BudgetManagementDialog } from "@/components/BudgetManagementDialog";
 import { SavingsGoalsPanel } from "@/components/SavingsGoalsPanel";
 import { DeleteWalletDialog } from "@/components/DeleteWalletDialog";
+import { exportWalletCsv } from "@/api/exports";
+import { toast } from "sonner";
 
 export default function WalletPage() {
   const [wallet, setWallet] = useState<Wallet | null>(null);
@@ -484,6 +486,20 @@ export default function WalletPage() {
                   </CardDescription>
                 </div>
                 <div className="flex gap-2">
+                  <Button
+                    variant="outline"
+                    onClick={async () => {
+                      try {
+                        await exportWalletCsv(params.id as string);
+                        toast.success("Export downloaded");
+                      } catch {
+                        toast.error("Export failed");
+                      }
+                    }}
+                  >
+                    <Download className="mr-2 h-4 w-4" />
+                    Export CSV
+                  </Button>
                   <Button variant="outline" onClick={() => setImportDialogOpen(true)}>
                     <Upload className="mr-2 h-4 w-4" />
                     Import CSV
