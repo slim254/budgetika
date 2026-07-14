@@ -151,3 +151,15 @@ CORS_ALLOWED_ORIGINS = env.list(
 
 # OpenAI (used by the AI batches; harmless if unset)
 OPENAI_API_KEY = env("OPENAI_API_KEY", default="")
+
+# AI / LLM settings
+AI_DEFAULT_PROVIDER = "openai"
+AI_DEFAULT_MONTHLY_TOKENS = 500_000
+AI_WARN_THRESHOLDS = [80, 95]  # percent
+
+AI_MODELS = {
+    "auto_categorize": "gpt-4o-mini",
+    "receipt_scan": "gpt-4o-mini",
+    "budget_recommendations": "gpt-4o-mini",
+    "chat": "gpt-4o",
+}
