@@ -204,9 +204,11 @@ export function TransactionDialog({
       setNewCategoryName("");
       setCategorySearch("");
       onCategoriesChanged(); // Refresh categories list
+      toast.success(`Category "${response.data.name}" created`);
     } catch (err) {
       console.error("Failed to create category:", err);
       setCreateCategoryError("Failed to create category. Please try again.");
+      toast.error("Failed to create category");
     } finally {
       setIsCreatingCategory(false);
     }
@@ -237,9 +239,11 @@ export function TransactionDialog({
       setNewTagName("");
       setTagSearch("");
       onTagsChanged(); // Refresh tags list
+      toast.success(`Tag "${response.data.name}" created`);
     } catch (err) {
       console.error("Failed to create tag:", err);
       setCreateTagError("Failed to create tag. Please try again.");
+      toast.error("Failed to create tag");
     } finally {
       setIsCreatingTag(false);
     }
@@ -428,6 +432,7 @@ export function TransactionDialog({
 
       if (transaction) {
         await axiosInstance.put(`transactions/${transaction.id}/`, payload);
+        toast.success("Transaction updated");
         onSaved();
         onClose();
       } else {
@@ -449,6 +454,7 @@ export function TransactionDialog({
           });
         }
 
+        toast.success(isRecurring ? "Transaction added and made recurring" : "Transaction added");
         onSaved();
 
         if (keepOpen) {
@@ -468,6 +474,7 @@ export function TransactionDialog({
     } catch (err) {
       console.error("Failed to save transaction:", err);
       setError("Failed to save transaction. Please try again.");
+      toast.error("Failed to save transaction");
     } finally {
       setIsLoading(false);
     }
