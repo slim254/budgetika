@@ -226,6 +226,7 @@ export default function WalletPage() {
     }
     try {
       await axiosInstance.delete(`transactions/${transactionId}/`);
+      toast.success("Transaction deleted");
       if (searchMode) {
         const { query, filters } = searchParamsRef.current;
         await fetchSearchResults(query, filters);
@@ -235,6 +236,7 @@ export default function WalletPage() {
     } catch (error) {
       console.error("Failed to delete transaction:", error);
       alert("Failed to delete transaction. Please try again.");
+      toast.error("Failed to delete transaction");
     }
   }
 
@@ -278,6 +280,7 @@ export default function WalletPage() {
   }
 
   async function handleImportComplete() {
+    toast.success("Import complete");
     await loadData();
     fetchCategories();
     fetchTags();
