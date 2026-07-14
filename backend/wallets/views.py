@@ -21,6 +21,7 @@ from .serializers import (
 from rest_framework.views import APIView
 from rest_framework.response import Response
 from .services import GenericCSVImportService, DashboardService, get_rate, SavingsGoalService
+from .ai import ai_service
 import json
 
 
@@ -1077,3 +1078,11 @@ class HealthView(APIView):
 
     def get(self, request):
         return Response({"status": "ok"})
+
+
+class AIQuotaView(APIView):
+    permission_classes = [IsAuthenticated]
+    authentication_classes = [JWTAuthentication]
+
+    def get(self, request):
+        return Response(ai_service.get_quota_status(request.user))

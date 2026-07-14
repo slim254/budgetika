@@ -12,6 +12,9 @@ from django.test import override_settings
 
 from wallets.ai import AIService, LLMResponse, QuotaExceededError, quota_exception_handler
 
+from rest_framework.test import APIClient
+from rest_framework_simplejwt.tokens import RefreshToken
+
 
 class TestModelPricing(TestCase):
     def test_get_current_returns_most_recent_valid_row(self):
@@ -192,3 +195,44 @@ class TestQuotaExceptionHandler(TestCase):
         response = quota_exception_handler(NotFound(), {})
         self.assertIsNotNone(response)
         self.assertEqual(response.status_code, 404)
+
+
+def make_auth_client(user):
+    client = APIClient()
+    token = RefreshToken.for_user(user).access_token
+    client.credentials(HTTP_AUTHORIZATION=f"Bearer {str(token)}")
+    return client
+
+
+@override_settings(
+    AI_DEFAULT_MONTHLY_TOKENS=1000,
+    AI_WARN_THRESHOLDS=[80, 95],
+    OPENAI_API_KEY="test-key",
+)
+class TestAIQuotaEndpoint(TestCase):
+    def setUp(self):
+        self.user = User.objects.create_user(username="endpoint_user", password="pass")
+        self.client = make_auth_client(self.user)
+
+    def test_returns_current_usage_and_limit(self):
+        AIUsageLog.objects.create(
+            user=self.user, provider="openai", model="gpt-4o-mini",
+            feature="auto_categorize", input_tokens=300, output_tokens=100,
+        )
+        response = self.client.get("/api/ai/quota/")
+        self.assertEqual(response.status_code, 200)
+        self.assertEqual(response.data["used_tokens"], 400)
+        self.assertEqual(response.data["limit_tokens"], 1000)
+        self.assertEqual(response.data["percent_used"], 40)
+        self.assertIn("month", response.data)
+
+    def test_returns_zero_when_no_logs_exist(self):
+        response = self.client.get("/api/ai/quota/")
+        self.assertEqual(response.status_code, 200)
+        self.assertEqual(response.data["used_tokens"], 0)
+        self.assertEqual(response.data["percent_used"], 0)
+
+    def test_requires_authentication(self):
+        unauthenticated = APIClient()
+        response = unauthenticated.get("/api/ai/quota/")
+        self.assertEqual(response.status_code, 401)

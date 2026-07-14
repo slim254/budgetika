@@ -22,7 +22,7 @@ from rest_framework_simplejwt.views import (
 )
 from wallets.views import (
     TransactionCreate, TransactionDetail, UserDashboard,
-    ExchangeRateView, UserProfileView, HealthView,
+    ExchangeRateView, UserProfileView, HealthView, AIQuotaView,
 )
 
 urlpatterns = [
@@ -34,6 +34,7 @@ urlpatterns = [
     path('api/exchange-rates/', ExchangeRateView.as_view(), name='exchange-rates'),
     path('api/profile/', UserProfileView.as_view(), name='user-profile'),
     path('api/health/', HealthView.as_view(), name='health'),
+    path('api/ai/quota/', AIQuotaView.as_view(), name='ai-quota'),
     path('api/token/', CustomTokenObtainPairView.as_view(), name='token_obtain_pair'),
     path('api/token/refresh/', TokenRefreshView.as_view(), name='token_refresh'),
 ]
