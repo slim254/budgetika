@@ -1,7 +1,8 @@
 "use client";
 
-import { useCallback, useEffect, useState } from "react";
+import { useCallback, useEffect, useRef, useState } from "react";
 import { ChevronDown, ChevronUp, Settings } from "lucide-react";
+import { toast } from "sonner";
 import { Button } from "@/components/ui/button";
 import { Card, CardContent, CardHeader } from "@/components/ui/card";
 import { BudgetSummaryItem, Currency } from "@/models/wallets";
@@ -28,6 +29,9 @@ export function BudgetPanel({ walletId, month, year, currency, onManageClick }: 
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState<string | null>(null);
 
+  const overBudget = summary.filter((i) => i.is_over_budget);
+  const toastedKey = useRef<string>("");
+
   const fetchSummary = useCallback(() => {
     setLoading(true);
     setError(null);
@@ -42,8 +46,20 @@ export function BudgetPanel({ walletId, month, year, currency, onManageClick }: 
   }, [expanded, storageKey]);
 
   useEffect(() => {
-    if (expanded) fetchSummary();
-  }, [expanded, fetchSummary]);
+    fetchSummary();
+  }, [fetchSummary]);
+
+  useEffect(() => {
+    const key = `${walletId}-${year}-${month}`;
+    if (overBudget.length > 0 && toastedKey.current !== key) {
+      toastedKey.current = key;
+      toast.error(
+        overBudget.length === 1
+          ? `Over budget: ${overBudget[0].category.name}`
+          : `${overBudget.length} categories over budget`
+      );
+    }
+  }, [overBudget, walletId, year, month]);
 
   const toggle = () => setExpanded((e) => !e);
 
@@ -62,6 +78,11 @@ export function BudgetPanel({ walletId, month, year, currency, onManageClick }: 
               <ChevronDown className="h-4 w-4" />
             )}
             Budget
+            {overBudget.length > 0 && (
+              <span className="ml-1 inline-flex items-center rounded-full bg-red-100 px-2 py-0.5 text-xs font-medium text-red-700">
+                {overBudget.length} over
+              </span>
+            )}
           </button>
           <Button variant="ghost" size="sm" onClick={onManageClick}>
             <Settings className="h-4 w-4 mr-1" />
