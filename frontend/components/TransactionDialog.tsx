@@ -35,9 +35,11 @@ import {
   CommandItem,
   CommandList,
 } from "@/components/ui/command";
-import { Check, ChevronsUpDown, Plus, EyeOff } from "lucide-react";
+import { Check, ChevronsUpDown, Plus, EyeOff, Sparkles } from "lucide-react";
+import { toast } from "sonner";
 import { cn } from "@/lib/utils";
 import { DynamicIcon } from "@/components/IconPicker";
+import { categorizeNote, CategorySuggestion } from "@/api/ai";
 
 interface TransactionDialogProps {
   open: boolean;
@@ -112,6 +114,9 @@ export function TransactionDialog({
   const [conversionPreview, setConversionPreview] = useState<string | null>(null);
   const [conversionError, setConversionError] = useState<string | null>(null);
   const [isFetchingRate, setIsFetchingRate] = useState(false);
+
+  // AI category suggestion state (create mode only)
+  const [suggestion, setSuggestion] = useState<CategorySuggestion | null>(null);
 
   // Recurring state (create mode only)
   const [isRecurring, setIsRecurring] = useState(false);
@@ -337,6 +342,27 @@ export function TransactionDialog({
       if (conversionTimerRef.current) clearTimeout(conversionTimerRef.current);
     };
   }, [conversionCurrency, conversionInput, formData.date, conversionOpen, currency]);
+
+  useEffect(() => {
+    if (transaction) return;               // suggestions only when creating
+    const note = formData.note.trim();
+    if (note.length < 3) {
+      setSuggestion(null);
+      return;
+    }
+    const timer = setTimeout(async () => {
+      try {
+        const res = await categorizeNote(note);
+        setSuggestion(res.data.suggestion);
+        if (res.data.usage_warning) {
+          toast.warning(`AI usage at ${res.data.usage_warning.percent_used}%`);
+        }
+      } catch {
+        // categorization is best-effort; ignore failures silently
+      }
+    }, 600);
+    return () => clearTimeout(timer);
+  }, [formData.note, transaction]);
 
   function validateForm(): boolean {
     const errors: Record<string, string> = {};
@@ -691,6 +717,16 @@ export function TransactionDialog({
                 </Command>
               </PopoverContent>
             </Popover>
+            {suggestion && formData.category !== suggestion.id && (
+              <button
+                type="button"
+                onClick={() => setFormData({ ...formData, category: suggestion.id })}
+                className="mt-1 inline-flex items-center gap-1 rounded-full border border-primary/40 px-2 py-0.5 text-xs text-primary hover:bg-primary/10"
+              >
+                <Sparkles className="h-3 w-3" />
+                Suggested: {suggestion.name}
+              </button>
+            )}
           </div>
 
           <div className="space-y-2">
