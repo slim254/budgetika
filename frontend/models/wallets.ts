@@ -133,6 +133,8 @@ export interface ImportCategorySuggestion {
     count: number;          // how many rows share this description
     category_id: string | null;
     category_name: string | null;
+    keyword: string;        // editable merchant keyword (rule match text)
+    source: "rule" | "ai" | null;  // where the suggestion came from
 }
 
 export interface ImportCategorizeResponse {

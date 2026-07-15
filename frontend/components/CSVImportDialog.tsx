@@ -43,6 +43,7 @@ import {
   TableRow,
 } from "@/components/ui/table";
 import { Card, CardContent } from "@/components/ui/card";
+import { Badge } from "@/components/ui/badge";
 import {
   Upload,
   FileSpreadsheet,
@@ -137,6 +138,7 @@ export function CSVImportDialog({
   const [categories, setCategories] = useState<Category[]>([]);
   const [suggestions, setSuggestions] = useState<ImportCategorySuggestion[]>([]);
   const [aiOverrides, setAiOverrides] = useState<Record<string, string>>({}); // key -> category_id ("" = Uncategorized)
+  const [keywords, setKeywords] = useState<Record<string, string>>({}); // key -> editable merchant keyword
   const [aiFetched, setAiFetched] = useState(false);
   const [aiLoading, setAiLoading] = useState(false);
   const [aiQuotaExceeded, setAiQuotaExceeded] = useState(false);
@@ -167,6 +169,7 @@ export function CSVImportDialog({
     setAiEnabled(true);
     setSuggestions([]);
     setAiOverrides({});
+    setKeywords({});
     setAiFetched(false);
     setAiLoading(false);
     setAiQuotaExceeded(false);
@@ -342,12 +345,15 @@ export function CSVImportDialog({
     try {
       const res = await suggestImportCategories(walletId, formData);
       setSuggestions(res.data.suggestions);
-      // Seed overrides from the AI's picks ("" => Uncategorized).
+      // Seed overrides from the AI's picks ("" => Uncategorized) and keywords.
       const seeded: Record<string, string> = {};
+      const seededKw: Record<string, string> = {};
       res.data.suggestions.forEach((s) => {
         seeded[s.key] = s.category_id ?? "";
+        seededKw[s.key] = s.keyword ?? "";
       });
       setAiOverrides(seeded);
+      setKeywords(seededKw);
       setAiQuotaExceeded(res.data.quota_exceeded);
       if (res.data.usage_warning) {
         toast.warning(`AI usage at ${res.data.usage_warning.percent_used}%`);
@@ -380,12 +386,25 @@ export function CSVImportDialog({
       const formData = buildImportFormData();
       if (!formData) return;
 
-      // Attach AI overrides (drop "" = Uncategorized). Absent => legacy behavior.
+      // Attach AI overrides. Absent => legacy behavior.
+      // Rows with a category AND a keyword become durable rules that cascade to
+      // similar rows and persist. Rows with a category but no keyword are
+      // one-off exact-signature overrides. "" category = leave Uncategorized.
       if (aiEnabled && suggestions.length > 0) {
-        const aiCategories = Object.fromEntries(
-          Object.entries(aiOverrides).filter(([, id]) => id)
-        );
+        const aiCategories: Record<string, string> = {};
+        const rules: { keyword: string; category_id: string }[] = [];
+        suggestions.forEach((s) => {
+          const categoryId = aiOverrides[s.key];
+          if (!categoryId) return; // Uncategorized
+          const keyword = (keywords[s.key] || "").trim();
+          if (keyword) {
+            rules.push({ keyword, category_id: categoryId });
+          } else {
+            aiCategories[s.key] = categoryId;
+          }
+        });
         formData.append("ai_categories", JSON.stringify(aiCategories));
+        formData.append("rules", JSON.stringify(rules));
       }
 
       const response = await axiosInstance.post<CSVExecuteResponse>(
@@ -868,22 +887,46 @@ export function CSVImportDialog({
               )}
 
               {aiEnabled && !aiLoading && suggestions.length > 0 && (
+                <>
+                <p className="text-xs text-muted-foreground">
+                  Keep a <span className="font-medium">keyword</span> to teach this category for every
+                  transaction containing it — now and on future imports. Clear it to apply the
+                  category to this row only.
+                </p>
                 <div className="border rounded-lg overflow-x-auto max-h-[360px] overflow-y-auto">
                   <Table>
                     <TableHeader>
                       <TableRow>
                         <TableHead>Description</TableHead>
                         <TableHead className="whitespace-nowrap text-right"># Txns</TableHead>
-                        <TableHead className="w-[200px]">Category</TableHead>
+                        <TableHead className="w-[160px]">Apply to (keyword)</TableHead>
+                        <TableHead className="w-[190px]">Category</TableHead>
                       </TableRow>
                     </TableHeader>
                     <TableBody>
                       {suggestions.map((s) => (
                         <TableRow key={s.key}>
-                          <TableCell className="max-w-[300px] truncate" title={s.signature}>
-                            {s.signature}
+                          <TableCell className="max-w-[240px]" title={s.signature}>
+                            <div className="flex items-center gap-2">
+                              <span className="truncate">{s.signature}</span>
+                              {s.source === "rule" && (
+                                <Badge variant="secondary" className="shrink-0 gap-1">
+                                  <Sparkles className="h-3 w-3" /> learned
+                                </Badge>
+                              )}
+                            </div>
                           </TableCell>
                           <TableCell className="text-right">{s.count}</TableCell>
+                          <TableCell>
+                            <Input
+                              value={keywords[s.key] ?? ""}
+                              placeholder="(this row only)"
+                              onChange={(e) =>
+                                setKeywords({ ...keywords, [s.key]: e.target.value })
+                              }
+                              className="h-9"
+                            />
+                          </TableCell>
                           <TableCell>
                             <Select
                               value={aiOverrides[s.key] || UNCATEGORIZED_VALUE}
@@ -915,6 +958,7 @@ export function CSVImportDialog({
                     </TableBody>
                   </Table>
                 </div>
+                </>
               )}
 
               {!aiEnabled && (

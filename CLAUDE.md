@@ -96,6 +96,8 @@ GET        /api/wallets/{wallet_id}/goals/summary/?month=M&year=Y
 POST       /api/wallets/{wallet_id}/import/parse/
 POST       /api/wallets/{wallet_id}/import/categorize/   (AI category suggestions, optional)
 POST       /api/wallets/{wallet_id}/import/execute/
+GET/POST   /api/wallets/import-rules/                    (learned keyword→category rules)
+DELETE     /api/wallets/import-rules/{id}/
 POST       /api/token/           (login)
 POST       /api/token/refresh/
 # POST     /api/register/         ⚠️ NOT IMPLEMENTED — planned (Auth batch). Create users via `createsuperuser`.
@@ -111,6 +113,8 @@ Two-step flow (plus an optional AI step):
 Business logic lives in `backend/wallets/services.py` (`GenericCSVImportService`). Duplicate detection: same wallet + date + amount + note.
 
 **AI auto-categorization:** constrained to the user's existing visible categories (never invents new ones). Each row's signature is built from all descriptive columns **except the mapped date and amount** (so identical merchants dedup regardless of date/amount). Batched via `wallets.ai.categorize_signatures()`; quota exhaustion mid-import is non-fatal (remaining rows left uncategorized). When `ai_categories` is passed, execute does **not** auto-create categories from the mapped column (unmatched mapped values fall through to the AI suggestion); the legacy path (no `ai_categories`) still auto-creates.
+
+**Learned category rules (`ImportCategoryRule`):** a user-taught `keyword → category` mapping. During import, any transaction whose signature contains the keyword (case-insensitive substring, longest keyword wins) is categorized **before** the LLM is called — so teaching a merchant once cascades to all similar rows and persists across future imports (free/instant thereafter). In the review step each suggestion carries an editable `keyword` (auto-detected merchant via `services.suggest_keyword()`) and a `source` of `rule`/`ai`/`null`. Execute's `rules` param (list of `{keyword, category_id}`) upserts them. Resolution order in AI mode: matching mapped value → exact-signature `ai_categories` override → learned rule → Uncategorized. Manage via `GET/POST /api/wallets/import-rules/` and `DELETE /api/wallets/import-rules/{id}/` (or Django admin).
 
 ## Currencies
 
