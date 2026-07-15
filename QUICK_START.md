@@ -28,7 +28,7 @@ python manage.py migrate
 python manage.py createsuperuser
 
 # Start backend
-python manage.py runserver
+python manage.py runserver 8100
 ```
 
 ### Frontend Setup (Terminal 2 - NEW WINDOW)
@@ -41,7 +41,7 @@ cd budgeting-app/frontend
 npm install
 
 # Create environment file
-echo "NEXT_PUBLIC_API_URL=http://localhost:8000/api/" > .env.local
+echo "NEXT_PUBLIC_API_URL=http://localhost:8100/api/" > .env.local
 
 # Start frontend
 npm run dev
@@ -49,9 +49,9 @@ npm run dev
 
 ### Access Application
 
-- **Frontend**: http://localhost:3000
-- **Backend API**: http://localhost:8000/api/wallets/
-- **Admin**: http://localhost:8000/admin
+- **Frontend**: http://localhost:3100
+- **Backend API**: http://localhost:8100/api/wallets/
+- **Admin**: http://localhost:8100/admin
 
 ---
 
@@ -66,8 +66,8 @@ npm run dev
 - [ ] Frontend dependencies installed: `npm install` succeeded
 - [ ] Frontend `.env.local` created with `NEXT_PUBLIC_API_URL`
 - [ ] Frontend running: `npm run dev` shows "✓ Ready in Xs"
-- [ ] Can visit http://localhost:3000 (frontend loads)
-- [ ] Can visit http://localhost:8000/admin (Django admin loads)
+- [ ] Can visit http://localhost:3100 (frontend loads)
+- [ ] Can visit http://localhost:8100/admin (Django admin loads)
 
 ---
 
@@ -89,7 +89,7 @@ cd budgeting-app/frontend
 npm install
 
 # Create .env.local file (first time only)
-echo "NEXT_PUBLIC_API_URL=http://localhost:8000/api/" > .env.local
+echo "NEXT_PUBLIC_API_URL=http://localhost:8100/api/" > .env.local
 
 # Create superuser (first time only)
 cd budgeting-app/backend
@@ -111,7 +111,7 @@ cd budgeting-app/backend
 source venv/bin/activate
 
 # Start backend (every work session)
-python manage.py runserver
+python manage.py runserver 8100
 
 # Start frontend (every work session, in NEW terminal)
 cd budgeting-app/frontend
@@ -144,7 +144,7 @@ pip install -r requirements.txt
 python manage.py migrate
 
 # Start backend
-python manage.py runserver
+python manage.py runserver 8100
 ```
 
 ### Command Prompt Version
@@ -166,7 +166,7 @@ REM Migrations
 python manage.py migrate
 
 REM Start backend
-python manage.py runserver
+python manage.py runserver 8100
 ```
 
 ---
@@ -175,7 +175,7 @@ python manage.py runserver
 
 ```bash
 # Check backend is running (visit in browser)
-http://localhost:8000/api/wallets/
+http://localhost:8100/api/wallets/
 
 # Should see either:
 # [] (empty list if not authenticated)
@@ -183,12 +183,12 @@ http://localhost:8000/api/wallets/
 # {"detail":"Authentication credentials were not provided."}
 
 # Check frontend is running (visit in browser)
-http://localhost:3000
+http://localhost:3100
 
 # Should see login page or home page
 
 # Check admin (visit in browser)
-http://localhost:8000/admin
+http://localhost:8100/admin
 
 # Should see Django admin interface
 ```
@@ -239,9 +239,9 @@ python manage.py migrate
 | Error | Fix |
 |-------|-----|
 | `ModuleNotFoundError: No module named 'django'` | Activate venv: `source venv/bin/activate` |
-| `Port 8000 already in use` | Use different port: `python manage.py runserver 8001` |
-| `Port 3000 already in use` | Use different port: `npm run dev -- -p 3001` |
-| `CORS error` | Backend must be running at `http://localhost:8000` |
+| `Port 8100 already in use` | Use different port: `python manage.py runserver 8101` |
+| `Port 3100 already in use` | Use different port: `npm run dev -- -p 3101` |
+| `CORS error` | Backend must be running at `http://localhost:8100` |
 | `Cannot GET /api/wallets/` returns 401 | Normal - login first at `/login` |
 | `no such table: auth_user` | Run migrations: `python manage.py migrate` |
 | `Python 2 instead of 3` | Use `python3` instead of `python` |
@@ -255,7 +255,7 @@ python manage.py migrate
 Location: `budgeting-app/frontend/.env.local`
 
 ```
-NEXT_PUBLIC_API_URL=http://localhost:8000/api/
+NEXT_PUBLIC_API_URL=http://localhost:8100/api/
 ```
 
 **Create it once, then ignore**
@@ -325,7 +325,7 @@ exit()
 1. Open two terminals side by side
 2. Run backend in Terminal 1
 3. Run frontend in Terminal 2
-4. Visit http://localhost:3000
+4. Visit http://localhost:3100
 5. Start coding!
 
 Good luck! 💪

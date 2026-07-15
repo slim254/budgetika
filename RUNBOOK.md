@@ -29,7 +29,7 @@ python manage.py seed_categories        # optional: default categories
 cd ../frontend
 npm install
 cp .env.example .env.local
-#   Edit .env.local: set NEXT_PUBLIC_API_URL=http://<mini-pc-ip>:8000/api/
+#   Edit .env.local: set NEXT_PUBLIC_API_URL=http://<mini-pc-ip>:8100/api/
 ```
 
 ## Run (two terminals / two tmux panes)
@@ -37,14 +37,14 @@ cp .env.example .env.local
 ```bash
 # Terminal 1 — backend, bound to all interfaces for LAN access
 cd backend && source venv/bin/activate
-python manage.py runserver 0.0.0.0:8000
+python manage.py runserver 0.0.0.0:8100
 
 # Terminal 2 — frontend
 cd frontend
 npm run dev -- -H 0.0.0.0
 ```
 
-Open `http://<mini-pc-ip>:3000` from any device on the LAN. Health check: `curl http://<mini-pc-ip>:8000/api/health/` → `{"status": "ok"}`.
+Open `http://<mini-pc-ip>:3100` from any device on the LAN. Health check: `curl http://<mini-pc-ip>:8100/api/health/` → `{"status": "ok"}`.
 
 ## Find the mini PC's LAN IP
 

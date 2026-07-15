@@ -3,7 +3,7 @@ import axios from "axios";
 // Configurable so the app works over LAN on the mini PC.
 // Set NEXT_PUBLIC_API_URL in frontend/.env.local (must end with a trailing slash).
 export const API_URL =
-  process.env.NEXT_PUBLIC_API_URL ?? "http://localhost:8000/api/";
+  process.env.NEXT_PUBLIC_API_URL ?? "http://localhost:8100/api/";
 
 export const axiosInstance = axios.create({
   baseURL: API_URL,

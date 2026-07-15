@@ -18,13 +18,13 @@ Two terminals required — backend and frontend run independently.
 ```bash
 cd backend
 source venv/bin/activate
-python manage.py runserver          # http://localhost:8000
+python manage.py runserver 8100     # http://localhost:8100
 ```
 
 **Frontend** (Terminal 2):
 ```bash
 cd frontend
-npm run dev                          # http://localhost:3000
+npm run dev                          # http://localhost:3100 (port set in package.json)
 ```
 
 After migrations or model changes:
@@ -35,9 +35,11 @@ python manage.py migrate
 ```
 
 URLs:
-- Frontend: http://localhost:3000
-- API: http://localhost:8000/api/wallets/
-- Admin: http://localhost:8000/admin
+- Frontend: http://localhost:3100
+- API: http://localhost:8100/api/wallets/
+- Admin: http://localhost:8100/admin
+
+Ports chosen (8100 backend / 3100 frontend) to avoid colliding with other local projects on 8000/3000. Backend port is a runserver arg; frontend port is baked into the `dev`/`start` scripts. Override either via `.env` (`NEXT_PUBLIC_API_URL`, `CORS_ALLOWED_ORIGINS`).
 
 ## Data Model
 

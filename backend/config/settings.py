@@ -147,7 +147,7 @@ DEFAULT_AUTO_FIELD = 'django.db.models.BigAutoField'
 # CORS — explicit allowlist (no more allow-all). Add the mini-PC LAN origin via .env.
 CORS_ALLOWED_ORIGINS = env.list(
     "CORS_ALLOWED_ORIGINS",
-    default=["http://localhost:3000", "http://127.0.0.1:3000"],
+    default=["http://localhost:3100", "http://127.0.0.1:3100"],
 )
 
 # OpenAI (used by the AI batches; harmless if unset)

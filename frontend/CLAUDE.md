@@ -30,7 +30,7 @@ frontend/
 ## Running
 
 ```bash
-npm run dev      # http://localhost:3000
+npm run dev      # http://localhost:3100
 npm run build
 npm run lint
 ```
@@ -44,7 +44,7 @@ import { axiosInstance } from "@/api/axiosInstance";
 const response = await axiosInstance.get<Wallet[]>("wallets/");
 ```
 
-- Base URL: `http://localhost:8000/api/`
+- Base URL: `http://localhost:8100/api/`
 - Auth: JWT injected automatically from `localStorage` (`token.access`)
 - 401 handling: attempts token refresh; on failure clears token and redirects to `/login`
 

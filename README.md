@@ -59,19 +59,19 @@ python3 -m venv venv
 source venv/bin/activate  # macOS/Linux
 pip install -r requirements.txt
 python manage.py migrate
-python manage.py runserver
+python manage.py runserver 8100
 
 # Terminal 2: Frontend (NEW WINDOW)
 cd budgeting-app/frontend
 npm install
-echo "NEXT_PUBLIC_API_URL=http://localhost:8000/api/" > .env.local
+echo "NEXT_PUBLIC_API_URL=http://localhost:8100/api/" > .env.local
 npm run dev
 ```
 
 Visit:
-- Frontend: http://localhost:3000
-- Backend: http://localhost:8000/api/wallets/
-- Admin: http://localhost:8000/admin
+- Frontend: http://localhost:3100
+- Backend: http://localhost:8100/api/wallets/
+- Admin: http://localhost:8100/admin
 
 **For detailed instructions, see [QUICK_START.md](QUICK_START.md)**
 

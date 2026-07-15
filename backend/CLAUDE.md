@@ -22,7 +22,7 @@ backend/
 
 ```bash
 source venv/bin/activate
-python manage.py runserver
+python manage.py runserver 8100
 ```
 
 ## Key Packages

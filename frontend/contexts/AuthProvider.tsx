@@ -2,6 +2,7 @@
 import type { JwtPayload } from "jwt-decode";
 import { jwtDecode } from "jwt-decode";
 import { createContext, useContext, useEffect, useState } from "react";
+import { API_URL } from "@/api/axiosInstance";
 
 /**
  * Session object containing user information and JWT tokens.
@@ -119,7 +120,7 @@ export function AuthProvider(props: AuthProviderProps) {
      */
     async function login(username: string, password: string) {
         try {
-            const tokenResponse = await fetch("http://localhost:8000/api/token/", {
+            const tokenResponse = await fetch(`${API_URL}token/`, {
                 method: "POST",
                 headers: {
                     "Content-Type": "application/json",
@@ -158,7 +159,7 @@ export function AuthProvider(props: AuthProviderProps) {
             return;
         }
         try {
-            const response = await fetch("http://localhost:8000/api/token/refresh/", {
+            const response = await fetch(`${API_URL}token/refresh/`, {
                 method: "POST",
                 headers: {
                     "Content-Type": "application/json",
