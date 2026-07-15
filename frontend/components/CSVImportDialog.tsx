@@ -436,8 +436,8 @@ export function CSVImportDialog({
 
   return (
     <Dialog open={open} onOpenChange={onOpenChange}>
-      <DialogContent className="sm:max-w-[700px] max-h-[90vh] overflow-y-auto">
-        <DialogHeader>
+      <DialogContent className="max-w-none w-screen h-screen max-h-screen sm:rounded-none flex flex-col p-0 gap-0">
+        <DialogHeader className="shrink-0 border-b px-6 pt-6 pb-4">
           <DialogTitle>Import Transactions from CSV</DialogTitle>
           <DialogDescription>
             Upload a CSV file and map columns to import transactions.
@@ -445,7 +445,7 @@ export function CSVImportDialog({
         </DialogHeader>
 
         {/* Progress Steps */}
-        <div className="flex items-center justify-between mb-6">
+        <div className="flex items-center justify-between shrink-0 overflow-x-auto border-b px-6 py-4">
           {STEPS.map((s, index) => (
             <div key={s.key} className="flex items-center">
               <div
@@ -476,7 +476,7 @@ export function CSVImportDialog({
         </div>
 
         {/* Step Content */}
-        <div className="min-h-[300px]">
+        <div className="flex-1 overflow-y-auto px-6 py-6">
           {/* Step 1: Upload */}
           {step === "upload" && (
             <div className="space-y-4">
@@ -893,7 +893,7 @@ export function CSVImportDialog({
                   transaction containing it — now and on future imports. Clear it to apply the
                   category to this row only.
                 </p>
-                <div className="border rounded-lg overflow-x-auto max-h-[360px] overflow-y-auto">
+                <div className="border rounded-lg overflow-x-auto">
                   <Table>
                     <TableHeader>
                       <TableRow>
@@ -906,7 +906,7 @@ export function CSVImportDialog({
                     <TableBody>
                       {suggestions.map((s) => (
                         <TableRow key={s.key}>
-                          <TableCell className="max-w-[240px]" title={s.signature}>
+                          <TableCell className="max-w-[520px]" title={s.signature}>
                             <div className="flex items-center gap-2">
                               <span className="truncate">{s.signature}</span>
                               {s.source === "rule" && (
@@ -1149,14 +1149,14 @@ export function CSVImportDialog({
 
         {/* Error Display */}
         {error && (
-          <div className="text-sm text-red-600 bg-red-50 p-3 rounded-md flex items-center gap-2">
+          <div className="shrink-0 mx-6 mb-2 text-sm text-red-600 bg-red-50 p-3 rounded-md flex items-center gap-2">
             <AlertCircle className="h-4 w-4" />
             {error}
           </div>
         )}
 
         {/* Navigation Buttons */}
-        <div className="flex justify-between pt-4 border-t">
+        <div className="flex justify-between shrink-0 border-t px-6 py-4">
           <div>
             {step !== "upload" && !executeResult && (
               <Button
