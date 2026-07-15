@@ -41,7 +41,7 @@ cd budgeting-app/frontend
 npm install
 
 # Create environment file
-echo "NEXT_PUBLIC_API_BASE_URL=http://localhost:8000/api" > .env.local
+echo "NEXT_PUBLIC_API_URL=http://localhost:8000/api/" > .env.local
 
 # Start frontend
 npm run dev
@@ -64,7 +64,7 @@ npm run dev
 - [ ] Database migrated: `python manage.py migrate` succeeded
 - [ ] Backend running: `python manage.py runserver` shows "Quit the server with CONTROL-C"
 - [ ] Frontend dependencies installed: `npm install` succeeded
-- [ ] Frontend `.env.local` created with `NEXT_PUBLIC_API_BASE_URL`
+- [ ] Frontend `.env.local` created with `NEXT_PUBLIC_API_URL`
 - [ ] Frontend running: `npm run dev` shows "✓ Ready in Xs"
 - [ ] Can visit http://localhost:3000 (frontend loads)
 - [ ] Can visit http://localhost:8000/admin (Django admin loads)
@@ -89,7 +89,7 @@ cd budgeting-app/frontend
 npm install
 
 # Create .env.local file (first time only)
-echo "NEXT_PUBLIC_API_BASE_URL=http://localhost:8000/api" > .env.local
+echo "NEXT_PUBLIC_API_URL=http://localhost:8000/api/" > .env.local
 
 # Create superuser (first time only)
 cd budgeting-app/backend
@@ -255,7 +255,7 @@ python manage.py migrate
 Location: `budgeting-app/frontend/.env.local`
 
 ```
-NEXT_PUBLIC_API_BASE_URL=http://localhost:8000/api
+NEXT_PUBLIC_API_URL=http://localhost:8000/api/
 ```
 
 **Create it once, then ignore**

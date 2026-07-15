@@ -122,4 +122,3 @@ Next up (see ROADMAP.md for full build order):
 - Auth & account management
 - Feature flags
 - Production readiness
-- Bug: future-dated transactions reset to today after save

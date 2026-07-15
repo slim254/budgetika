@@ -315,7 +315,7 @@ Create a `.env.local` file in the frontend directory:
 
 **File**: `budgeting-app/frontend/.env.local`
 ```
-NEXT_PUBLIC_API_BASE_URL=http://localhost:8000/api
+NEXT_PUBLIC_API_URL=http://localhost:8000/api/
 ```
 
 This tells the frontend where to find the Django API.
@@ -523,7 +523,7 @@ npm run dev -- -p 3001
 **If still getting CORS error**:
 1. Verify backend is running: http://localhost:8000/api/wallets/
 2. Check browser console for exact error message
-3. Verify API URL in frontend `.env.local`: `NEXT_PUBLIC_API_BASE_URL=http://localhost:8000/api`
+3. Verify API URL in frontend `.env.local`: `NEXT_PUBLIC_API_URL=http://localhost:8000/api/`
 
 ### Issue 6: "Cannot GET /api/wallets/" returns 401 Unauthorized
 

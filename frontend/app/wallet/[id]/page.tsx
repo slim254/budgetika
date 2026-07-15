@@ -5,7 +5,7 @@ import ProtectedRoute from "@/components/ProtectedRoute";
 import { Button } from "@/components/ui/button";
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/components/ui/card";
 import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from "@/components/ui/table";
-import { ArrowLeft, Plus, Edit, Trash2, TrendingUp, TrendingDown, Upload, BarChart3, Search, ArrowLeftRight, Download } from "lucide-react";
+import { ArrowLeft, Plus, Edit, Trash2, TrendingUp, TrendingDown, Wallet as WalletIcon, Upload, BarChart3, Search, ArrowLeftRight, Download } from "lucide-react";
 import { DynamicIcon } from "@/components/IconPicker";
 import { UserMenu } from "@/components/UserMenu";
 import { useParams, useRouter, useSearchParams } from "next/navigation";
@@ -396,7 +396,7 @@ export default function WalletPage() {
         </header>
 
         <main className="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8 py-8">
-          <div className="grid gap-6 md:grid-cols-3 mb-8">
+          <div className="grid gap-6 md:grid-cols-4 mb-8">
             <Card>
               <CardHeader className="flex flex-row items-center justify-between space-y-0 pb-2">
                 <CardTitle className="text-sm font-medium">Initial Value</CardTitle>
@@ -429,6 +429,21 @@ export default function WalletPage() {
                 <div className="text-2xl font-bold text-red-600">{formatCurrency(expenseTotal, wallet.currency)}</div>
                 <p className="text-xs text-muted-foreground">
                   {transactions.filter(t => Number(t.amount) < 0).length} transactions
+                </p>
+              </CardContent>
+            </Card>
+
+            <Card>
+              <CardHeader className="flex flex-row items-center justify-between space-y-0 pb-2">
+                <CardTitle className="text-sm font-medium">Balance</CardTitle>
+                <WalletIcon className="h-4 w-4 text-muted-foreground" />
+              </CardHeader>
+              <CardContent>
+                <div className={`text-2xl font-bold ${incomeTotal - expenseTotal >= 0 ? 'text-green-600' : 'text-red-600'}`}>
+                  {formatCurrency(incomeTotal - expenseTotal, wallet.currency)}
+                </div>
+                <p className="text-xs text-muted-foreground">
+                  {searchMode ? "All transactions" : getDisplayLabel()}
                 </p>
               </CardContent>
             </Card>

@@ -49,7 +49,7 @@ export function DeleteWalletDialog({
         <Dialog open={open} onOpenChange={onOpenChange}>
             <DialogContent className="sm:max-w-md">
                 <DialogHeader>
-                    <DialogTitle>Delete "{walletName}"?</DialogTitle>
+                    <DialogTitle>Delete &quot;{walletName}&quot;?</DialogTitle>
                 </DialogHeader>
 
                 <p className="text-sm text-gray-600">
