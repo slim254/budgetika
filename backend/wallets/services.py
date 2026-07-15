@@ -4,8 +4,10 @@ from datetime import timedelta
 from math import ceil
 import csv
 import datetime
+import re
 from datetime import date as _date
 import requests
+from django.conf import settings
 from django.db import transaction
 from django.db.models import Sum, Count, Q, Avg, Min, Max, DecimalField, F
 from django.db.models.functions import Coalesce, TruncMonth
@@ -60,6 +62,9 @@ class GenericCSVImportService:
         self.category_cache = {}  # {name: Category instance}
         self.tag_cache = {}  # {name: Tag instance}
 
+        # AI review mode: {normalized_signature: category_id}. None => legacy behavior.
+        self.ai_categories = None
+
         # Track what we created (for response)
         self.created_categories = set()
         self.created_tags = set()
@@ -90,11 +95,17 @@ class GenericCSVImportService:
             "unique_values": {k: sorted(list(v)) for k, v in unique_values.items()},
         }
 
-    def execute(self, column_mapping, amount_config, filters=None):
+    def execute(self, column_mapping, amount_config, filters=None, ai_categories=None):
         """
         Import transactions using user's column mapping.
 
         This is Step 2 - user provides mapping, we import.
+
+        ai_categories: None => legacy behavior (auto-create categories from the
+            mapped column). A dict (possibly empty) {normalized_signature:
+            category_id} => AI review mode: keep mapped values that match an
+            existing category, fill the rest from the AI suggestion map, and
+            never auto-create categories.
 
         Args:
             column_mapping: {'amount': 'CSV Column Name', 'date': 'CSV Column', ...}
@@ -119,6 +130,8 @@ class GenericCSVImportService:
                 'errors': [{'row': 5, 'error': 'Invalid date'}]
             }
         """
+        self.ai_categories = ai_categories
+
         # Parse if not already done (user might call execute directly)
         if self.rows is None:
             try:
@@ -282,10 +295,6 @@ class GenericCSVImportService:
             if column_mapping.get("note"):
                 note = row.get(column_mapping["note"], "").strip()
 
-            category_name = None
-            if column_mapping.get("category"):
-                category_name = row.get(column_mapping["category"], "").strip() or None
-
             tags_str = ""
             if column_mapping.get("tags"):
                 tags_str = row.get(column_mapping["tags"], "").strip()
@@ -308,9 +317,7 @@ class GenericCSVImportService:
             if self._is_duplicate(date, amount, note):
                 return "duplicate"
 
-            category = None
-            if category_name:
-                category = self._get_or_create_category(category_name)
+            category = self._resolve_category(row, column_mapping)
 
             tags = self._get_or_create_tags(tags_str)
 
@@ -480,6 +487,98 @@ class GenericCSVImportService:
             amount=Decimal(str(amount)),
             note=note,
         ).exists()
+
+    def _existing_categories(self):
+        """Cache the user's real categories.
+
+        Returns (by_name, by_id) where by_name maps lowercased name -> instance
+        and by_id maps str(id) -> instance. Only visible, non-archived
+        categories are considered (mirrors the dropdown the user sees).
+        """
+        if not hasattr(self, "_cat_by_name"):
+            cats = list(
+                TransactionCategory.objects.filter(
+                    user=self.user, is_archived=False, is_visible=True
+                )
+            )
+            self._cat_by_name = {c.name.lower(): c for c in cats}
+            self._cat_by_id = {str(c.id): c for c in cats}
+        return self._cat_by_name, self._cat_by_id
+
+    @staticmethod
+    def _norm(signature):
+        """Normalize a signature into a stable dedup key."""
+        return re.sub(r"\s+", " ", signature).strip().lower()
+
+    def build_signature(self, row, column_mapping):
+        """Join all descriptive column values, excluding the mapped date & amount.
+
+        Excluding date and amount is essential: they are high-cardinality, so
+        including them would make almost every row unique and defeat dedup. The
+        remaining columns (mapped or not) provide the "whole row" context.
+        """
+        skip = {column_mapping.get("date"), column_mapping.get("amount")}
+        parts = []
+        for col in self.columns:
+            if col in skip:
+                continue
+            val = (row.get(col) or "").strip()
+            if val:
+                parts.append(val)
+        return " | ".join(parts)
+
+    def _needs_ai_category(self, row, column_mapping):
+        """A row needs AI when it has no mapped category matching an existing one."""
+        by_name, _ = self._existing_categories()
+        col = column_mapping.get("category")
+        if not col:
+            return True
+        val = row.get(col, "").strip()
+        return not val or val.lower() not in by_name
+
+    def collect_signatures(self, column_mapping, amount_config, filters=None):
+        """Unique descriptions of rows needing AI, most frequent first, capped.
+
+        Each item: {"key", "signature", "count"}. Used by the suggest endpoint
+        to ask the LLM once per unique description rather than once per row.
+        """
+        if self.rows is None:
+            self.columns, self.rows = self._parse_csv()
+
+        groups = {}  # key -> {"key", "signature", "count"}
+        for _, row in self.rows:
+            if filters and not self._matches_filters(row, filters):
+                continue
+            if not self._needs_ai_category(row, column_mapping):
+                continue
+            signature = self.build_signature(row, column_mapping)
+            if not signature:
+                continue
+            key = self._norm(signature)
+            if key in groups:
+                groups[key]["count"] += 1
+            else:
+                groups[key] = {"key": key, "signature": signature, "count": 1}
+
+        ordered = sorted(groups.values(), key=lambda g: g["count"], reverse=True)
+        return ordered[: settings.AI_IMPORT_MAX_UNIQUE]
+
+    def _resolve_category(self, row, column_mapping):
+        """Determine the category for a row, honoring legacy vs. AI-review mode."""
+        col = column_mapping.get("category")
+        mapped_val = row.get(col, "").strip() if col else ""
+
+        if self.ai_categories is None:
+            # Legacy flow: auto-create from the mapped column (unchanged behavior).
+            return self._get_or_create_category(mapped_val) if mapped_val else None
+
+        # AI review flow: never auto-create.
+        by_name, by_id = self._existing_categories()
+        if mapped_val and mapped_val.lower() in by_name:
+            return by_name[mapped_val.lower()]          # keep matching mapped value
+        key = self._norm(self.build_signature(row, column_mapping))
+        cat_id = self.ai_categories.get(key)
+        return by_id.get(cat_id) if cat_id else None    # AI suggestion, else Uncategorized
 
     def _get_or_create_category(self, category_name):
         """
