@@ -126,6 +126,21 @@ export interface CSVExecuteResponse {
     error?: string;
 }
 
+// AI import categorization — one suggestion per UNIQUE transaction description.
+export interface ImportCategorySuggestion {
+    key: string;            // stable normalized signature; echoed back on execute
+    signature: string;      // human-readable joined description
+    count: number;          // how many rows share this description
+    category_id: string | null;
+    category_name: string | null;
+}
+
+export interface ImportCategorizeResponse {
+    suggestions: ImportCategorySuggestion[];
+    usage_warning: { percent_used: number; threshold: number } | null;
+    quota_exceeded: boolean;
+}
+
 // Dashboard / metrics types — numeric fields are strings because DRF
 // DecimalField serializes to JSON strings. Coerce with Number() at render.
 

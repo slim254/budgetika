@@ -1,6 +1,6 @@
 "use client";
 
-import { useState, useRef } from "react";
+import { useState, useRef, useEffect } from "react";
 import { axiosInstance } from "@/api/axiosInstance";
 import { toast } from "sonner";
 import {
@@ -11,7 +11,12 @@ import {
   FilterRule,
   FilterOperator,
   CSVExecuteResponse,
+  ImportCategorySuggestion,
+  Category,
 } from "@/models/wallets";
+import { suggestImportCategories } from "@/api/ai";
+import { Switch } from "@/components/ui/switch";
+import { DynamicIcon } from "@/components/IconPicker";
 import {
   Dialog,
   DialogContent,
@@ -48,6 +53,8 @@ import {
   AlertCircle,
   Trash2,
   Plus,
+  Sparkles,
+  Loader2,
 } from "lucide-react";
 import { cn } from "@/lib/utils";
 
@@ -59,15 +66,18 @@ interface CSVImportDialogProps {
   walletId: string;
 }
 
-type Step = "upload" | "mapping" | "amount" | "filters" | "review";
+type Step = "upload" | "mapping" | "amount" | "filters" | "categorize" | "review";
 
 const STEPS: { key: Step; label: string }[] = [
   { key: "upload", label: "Upload" },
   { key: "mapping", label: "Map Columns" },
   { key: "amount", label: "Amount Config" },
   { key: "filters", label: "Filters" },
+  { key: "categorize", label: "AI Categorize" },
   { key: "review", label: "Review" },
 ];
+
+const UNCATEGORIZED_VALUE = "__uncategorized__";
 
 const FILTER_OPERATORS: { value: FilterOperator; label: string }[] = [
   { value: "equals", label: "Equals" },
@@ -122,6 +132,28 @@ export function CSVImportDialog({
   // Execute result state
   const [executeResult, setExecuteResult] = useState<CSVExecuteResponse | null>(null);
 
+  // AI categorization state
+  const [aiEnabled, setAiEnabled] = useState(true);
+  const [categories, setCategories] = useState<Category[]>([]);
+  const [suggestions, setSuggestions] = useState<ImportCategorySuggestion[]>([]);
+  const [aiOverrides, setAiOverrides] = useState<Record<string, string>>({}); // key -> category_id ("" = Uncategorized)
+  const [aiFetched, setAiFetched] = useState(false);
+  const [aiLoading, setAiLoading] = useState(false);
+  const [aiQuotaExceeded, setAiQuotaExceeded] = useState(false);
+
+  // Load the user's categories once when the dialog opens (for override dropdowns).
+  useEffect(() => {
+    if (!open) return;
+    axiosInstance
+      .get<Category[]>("wallets/categories/")
+      .then((res) =>
+        setCategories(res.data.filter((c) => c.is_visible && !c.is_archived))
+      )
+      .catch(() => {
+        /* non-fatal: AI step can still import everything as Uncategorized */
+      });
+  }, [open]);
+
   function resetState() {
     setStep("upload");
     setFile(null);
@@ -132,6 +164,12 @@ export function CSVImportDialog({
     setExecuteResult(null);
     setError("");
     setIsLoading(false);
+    setAiEnabled(true);
+    setSuggestions([]);
+    setAiOverrides({});
+    setAiFetched(false);
+    setAiLoading(false);
+    setAiQuotaExceeded(false);
   }
 
   function handleClose() {
@@ -276,6 +314,62 @@ export function CSVImportDialog({
     setFilters(filters.filter((_, i) => i !== index));
   }
 
+  // Shared payload for both the AI suggest call and the final execute call.
+  function buildImportFormData(): FormData | null {
+    if (!file) return null;
+
+    // Convert "__none__" back to empty string for the backend.
+    const cleanedMapping: Record<string, string> = { ...columnMapping };
+    Object.keys(cleanedMapping).forEach((key) => {
+      if (cleanedMapping[key] === "__none__") {
+        cleanedMapping[key] = "";
+      }
+    });
+
+    const formData = new FormData();
+    formData.append("file", file);
+    formData.append("column_mapping", JSON.stringify(cleanedMapping));
+    formData.append("amount_config", JSON.stringify(amountConfig));
+    formData.append("filters", JSON.stringify(filters));
+    return formData;
+  }
+
+  async function fetchSuggestions() {
+    const formData = buildImportFormData();
+    if (!formData) return;
+
+    setAiLoading(true);
+    try {
+      const res = await suggestImportCategories(walletId, formData);
+      setSuggestions(res.data.suggestions);
+      // Seed overrides from the AI's picks ("" => Uncategorized).
+      const seeded: Record<string, string> = {};
+      res.data.suggestions.forEach((s) => {
+        seeded[s.key] = s.category_id ?? "";
+      });
+      setAiOverrides(seeded);
+      setAiQuotaExceeded(res.data.quota_exceeded);
+      if (res.data.usage_warning) {
+        toast.warning(`AI usage at ${res.data.usage_warning.percent_used}%`);
+      }
+    } catch (err) {
+      console.error("Failed to fetch AI suggestions:", err);
+      toast.error("Couldn't fetch AI suggestions — rows will import uncategorized");
+      setSuggestions([]);
+    } finally {
+      setAiLoading(false);
+      setAiFetched(true);
+    }
+  }
+
+  // When entering the AI step with the toggle on, fetch suggestions once.
+  function enterCategorizeStep() {
+    goToStep("categorize");
+    if (aiEnabled && !aiFetched) {
+      fetchSuggestions();
+    }
+  }
+
   async function handleExecute() {
     if (!file) return;
 
@@ -283,25 +377,16 @@ export function CSVImportDialog({
     setError("");
 
     try {
-      // Convert "__none__" back to empty string or undefined for backend
-      const cleanedMapping: Record<string, string> = { ...columnMapping };
-      Object.keys(cleanedMapping).forEach(key => {
-        if (cleanedMapping[key] === "__none__") {
-          cleanedMapping[key] = "";
-        }
-      });
+      const formData = buildImportFormData();
+      if (!formData) return;
 
-      console.log("Sending import data:", {
-        cleanedMapping,
-        amountConfig,
-        filters,
-      });
-
-      const formData = new FormData();
-      formData.append("file", file);
-      formData.append("column_mapping", JSON.stringify(cleanedMapping));
-      formData.append("amount_config", JSON.stringify(amountConfig));
-      formData.append("filters", JSON.stringify(filters));
+      // Attach AI overrides (drop "" = Uncategorized). Absent => legacy behavior.
+      if (aiEnabled && suggestions.length > 0) {
+        const aiCategories = Object.fromEntries(
+          Object.entries(aiOverrides).filter(([, id]) => id)
+        );
+        formData.append("ai_categories", JSON.stringify(aiCategories));
+      }
 
       const response = await axiosInstance.post<CSVExecuteResponse>(
         `wallets/${walletId}/import/execute/`,
@@ -739,7 +824,108 @@ export function CSVImportDialog({
             </div>
           )}
 
-          {/* Step 5: Review */}
+          {/* Step 5: AI Categorize */}
+          {step === "categorize" && parseResult && (
+            <div className="space-y-4">
+              <div className="flex items-start justify-between gap-4 rounded-lg border p-4">
+                <div className="space-y-1">
+                  <Label className="flex items-center gap-2">
+                    <Sparkles className="h-4 w-4 text-primary" />
+                    Auto-categorize with AI
+                  </Label>
+                  <p className="text-sm text-muted-foreground">
+                    Suggest a category for transactions that don&apos;t already have one,
+                    using the whole row as context. Review and adjust below before importing.
+                  </p>
+                </div>
+                <Switch
+                  checked={aiEnabled}
+                  onCheckedChange={(checked) => {
+                    setAiEnabled(checked);
+                    if (checked && !aiFetched && !aiLoading) fetchSuggestions();
+                  }}
+                />
+              </div>
+
+              {aiEnabled && aiLoading && (
+                <div className="flex items-center justify-center gap-2 py-12 text-muted-foreground">
+                  <Loader2 className="h-5 w-5 animate-spin" />
+                  Analyzing transactions…
+                </div>
+              )}
+
+              {aiEnabled && !aiLoading && aiQuotaExceeded && (
+                <div className="flex items-center gap-2 rounded-md bg-amber-50 p-3 text-sm text-amber-700">
+                  <AlertCircle className="h-4 w-4" />
+                  AI quota reached — some rows were left uncategorized.
+                </div>
+              )}
+
+              {aiEnabled && !aiLoading && aiFetched && suggestions.length === 0 && (
+                <div className="py-12 text-center text-muted-foreground">
+                  <p>No uncategorized transactions to suggest.</p>
+                </div>
+              )}
+
+              {aiEnabled && !aiLoading && suggestions.length > 0 && (
+                <div className="border rounded-lg overflow-x-auto max-h-[360px] overflow-y-auto">
+                  <Table>
+                    <TableHeader>
+                      <TableRow>
+                        <TableHead>Description</TableHead>
+                        <TableHead className="whitespace-nowrap text-right"># Txns</TableHead>
+                        <TableHead className="w-[200px]">Category</TableHead>
+                      </TableRow>
+                    </TableHeader>
+                    <TableBody>
+                      {suggestions.map((s) => (
+                        <TableRow key={s.key}>
+                          <TableCell className="max-w-[300px] truncate" title={s.signature}>
+                            {s.signature}
+                          </TableCell>
+                          <TableCell className="text-right">{s.count}</TableCell>
+                          <TableCell>
+                            <Select
+                              value={aiOverrides[s.key] || UNCATEGORIZED_VALUE}
+                              onValueChange={(v) =>
+                                setAiOverrides({
+                                  ...aiOverrides,
+                                  [s.key]: v === UNCATEGORIZED_VALUE ? "" : v,
+                                })
+                              }
+                            >
+                              <SelectTrigger>
+                                <SelectValue />
+                              </SelectTrigger>
+                              <SelectContent>
+                                <SelectItem value={UNCATEGORIZED_VALUE}>Uncategorized</SelectItem>
+                                {categories.map((c) => (
+                                  <SelectItem key={c.id} value={c.id}>
+                                    <span className="flex items-center gap-2">
+                                      <DynamicIcon name={c.icon} className="h-3.5 w-3.5" />
+                                      {c.name}
+                                    </span>
+                                  </SelectItem>
+                                ))}
+                              </SelectContent>
+                            </Select>
+                          </TableCell>
+                        </TableRow>
+                      ))}
+                    </TableBody>
+                  </Table>
+                </div>
+              )}
+
+              {!aiEnabled && (
+                <div className="py-12 text-center text-muted-foreground">
+                  <p>AI categorization is off. Transactions will import with their mapped category (if any).</p>
+                </div>
+              )}
+            </div>
+          )}
+
+          {/* Step 6: Review */}
           {step === "review" && parseResult && (
             <div className="space-y-4">
               {!executeResult ? (
@@ -764,6 +950,14 @@ export function CSVImportDialog({
                           <div className="flex justify-between">
                             <dt className="text-muted-foreground">Filters:</dt>
                             <dd>{filters.length > 0 ? `${filters.length} filter(s)` : "None"}</dd>
+                          </div>
+                          <div className="flex justify-between">
+                            <dt className="text-muted-foreground">AI Categorization:</dt>
+                            <dd>
+                              {aiEnabled && suggestions.length > 0
+                                ? `${Object.values(aiOverrides).filter((id) => id).length}/${suggestions.length} categorized`
+                                : "Off"}
+                            </dd>
                           </div>
                         </dl>
                       </CardContent>
@@ -967,7 +1161,14 @@ export function CSVImportDialog({
             )}
 
             {step === "filters" && (
-              <Button onClick={() => goToStep("review")} disabled={isLoading}>
+              <Button onClick={enterCategorizeStep} disabled={isLoading}>
+                Continue
+                <ArrowRight className="h-4 w-4 ml-2" />
+              </Button>
+            )}
+
+            {step === "categorize" && (
+              <Button onClick={() => goToStep("review")} disabled={isLoading || aiLoading}>
                 Continue
                 <ArrowRight className="h-4 w-4 ml-2" />
               </Button>
