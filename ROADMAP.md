@@ -30,6 +30,7 @@
 | Over-budget Alerts | In-app highlighted row + toast when a budgeted category crosses its limit mid-month, driven by `is_over_budget` on the budget summary endpoint. |
 | LLM Abstraction & Usage Tracking | `LLMProvider` protocol + `OpenAIAdapter` in `wallets/ai.py`; `AIService.complete()` enforces per-user monthly token quotas, logs every call to `AIUsageLog`, returns warnings at 80%/95% thresholds; `QuotaExceededError` → HTTP 429; pricing in `ModelPricing`; `GET /api/ai/quota/`. |
 | AI Auto-categorization | `POST /api/wallets/categorize/` suggests a category from note text using the user's own categories as context; suggestion chip in `TransactionDialog`. |
+| CSV Import AI Categorization | Whole-row, batched, review-step AI categorization during CSV import. `POST /api/wallets/{id}/import/categorize/` returns one suggestion per **unique** row description (deduped, excluding date/amount) constrained to the user's existing categories; execute applies the reviewed map via `ai_categories`. Builds on the LLM Abstraction + note auto-categorize. New "AI Categorize" step in `CSVImportDialog` with per-description override dropdowns. Quota exhaustion is non-fatal. |
 
 ---
 

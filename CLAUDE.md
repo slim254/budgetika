@@ -94,6 +94,7 @@ GET/POST   /api/wallets/{wallet_id}/goals/
 GET/PATCH/DELETE  /api/wallets/{wallet_id}/goals/{goal_id}/
 GET        /api/wallets/{wallet_id}/goals/summary/?month=M&year=Y
 POST       /api/wallets/{wallet_id}/import/parse/
+POST       /api/wallets/{wallet_id}/import/categorize/   (AI category suggestions, optional)
 POST       /api/wallets/{wallet_id}/import/execute/
 POST       /api/token/           (login)
 POST       /api/token/refresh/
@@ -102,11 +103,14 @@ POST       /api/token/refresh/
 
 ## CSV Import
 
-Two-step flow:
+Two-step flow (plus an optional AI step):
 1. **Parse** (`/import/parse/`) — upload CSV, get columns + sample rows + unique values
-2. **Execute** (`/import/execute/`) — supply column mapping + amount config + optional filters
+2. **Categorize** (`/import/categorize/`, optional) — AI suggests a category per **unique** row description for rows that lack a matching mapped category. Returns `{suggestions: [{key, signature, count, category_id, category_name}], usage_warning, quota_exceeded}`.
+3. **Execute** (`/import/execute/`) — supply column mapping + amount config + optional filters. Optionally include `ai_categories` ({normalized_signature: category_id}) to apply the reviewed AI suggestions.
 
 Business logic lives in `backend/wallets/services.py` (`GenericCSVImportService`). Duplicate detection: same wallet + date + amount + note.
+
+**AI auto-categorization:** constrained to the user's existing visible categories (never invents new ones). Each row's signature is built from all descriptive columns **except the mapped date and amount** (so identical merchants dedup regardless of date/amount). Batched via `wallets.ai.categorize_signatures()`; quota exhaustion mid-import is non-fatal (remaining rows left uncategorized). When `ai_categories` is passed, execute does **not** auto-create categories from the mapped column (unmatched mapped values fall through to the AI suggestion); the legacy path (no `ai_categories`) still auto-creates.
 
 ## Currencies
 
