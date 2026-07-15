@@ -23,7 +23,7 @@ from .serializers import (
 from rest_framework.views import APIView
 from rest_framework.response import Response
 from .services import GenericCSVImportService, DashboardService, get_rate, SavingsGoalService
-from .ai import ai_service
+from .ai import ai_service, categorize_signatures
 import json
 
 
@@ -526,6 +526,7 @@ class CSVExecuteView(APIView):
             'file': request.data.get('file')
         }
 
+        ai_categories = None
         try:
             # Parse JSON strings to Python objects
             if 'column_mapping' in request.data:
@@ -534,6 +535,8 @@ class CSVExecuteView(APIView):
                 data['amount_config'] = json.loads(request.data['amount_config'])
             if 'filters' in request.data:
                 data['filters'] = json.loads(request.data['filters'])
+            if 'ai_categories' in request.data:
+                ai_categories = json.loads(request.data['ai_categories'])
         except json.JSONDecodeError as e:
             return Response(
                 {"error": f"Invalid JSON in request: {str(e)}"},
@@ -549,13 +552,86 @@ class CSVExecuteView(APIView):
         amount_config = serializer.validated_data['amount_config']
         filters = serializer.validated_data.get('filters', [])
 
+        # Only pass a dict through (None => legacy auto-create behavior).
+        if not isinstance(ai_categories, dict):
+            ai_categories = None
+
         service = GenericCSVImportService(request.user, wallet, csv_file)
-        result = service.execute(column_mapping, amount_config, filters)
+        result = service.execute(
+            column_mapping, amount_config, filters, ai_categories=ai_categories
+        )
 
         if result.get('success'):
             return Response(result)
         else:
             return Response(result, status=status.HTTP_400_BAD_REQUEST)
+
+
+class CSVCategorizeView(APIView):
+    """POST /api/wallets/{wallet_id}/import/categorize/ — AI category suggestions per unique row.
+
+    Same request shape as execute (file + column_mapping + amount_config + filters),
+    but instead of importing, returns one AI-suggested category per UNIQUE description
+    of the rows that need categorizing. The frontend shows these for review/override,
+    then echoes the (possibly edited) map back to execute as `ai_categories`.
+    """
+    permission_classes = [IsAuthenticated]
+    authentication_classes = [JWTAuthentication]
+
+    def post(self, request, wallet_id):
+        wallet = get_object_or_404(Wallet, id=wallet_id, user=request.user)
+
+        data = {"file": request.data.get("file")}
+        try:
+            for field in ("column_mapping", "amount_config", "filters"):
+                if field in request.data:
+                    data[field] = json.loads(request.data[field])
+        except json.JSONDecodeError as e:
+            return Response({"error": f"Invalid JSON in request: {str(e)}"},
+                            status=status.HTTP_400_BAD_REQUEST)
+
+        serializer = CSVExecuteSerializer(data=data)
+        if not serializer.is_valid():
+            return Response(serializer.errors, status=status.HTTP_400_BAD_REQUEST)
+
+        service = GenericCSVImportService(
+            request.user, wallet, serializer.validated_data["file"]
+        )
+        try:
+            uniques = service.collect_signatures(
+                serializer.validated_data["column_mapping"],
+                serializer.validated_data["amount_config"],
+                serializer.validated_data.get("filters", []),
+            )
+        except Exception as e:
+            return Response({"success": False, "error": str(e)},
+                            status=status.HTTP_400_BAD_REQUEST)
+
+        categories = TransactionCategory.objects.filter(
+            user=request.user, is_archived=False, is_visible=True
+        )
+        by_name = {c.name.lower(): c for c in categories}
+        names = [c.name for c in categories]
+
+        items = [(u["key"], u["signature"]) for u in uniques]
+        mapping, warning, quota_exceeded = categorize_signatures(request.user, items, names)
+
+        suggestions = []
+        for u in uniques:
+            cat = by_name.get(mapping.get(u["key"], "").lower())
+            suggestions.append({
+                "key": u["key"],
+                "signature": u["signature"],
+                "count": u["count"],
+                "category_id": str(cat.id) if cat else None,
+                "category_name": cat.name if cat else None,
+            })
+
+        return Response({
+            "suggestions": suggestions,
+            "usage_warning": warning,
+            "quota_exceeded": quota_exceeded,
+        })
 
 
 class CSVExportView(APIView):
