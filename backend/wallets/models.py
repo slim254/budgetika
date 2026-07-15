@@ -474,3 +474,28 @@ class UserAIQuota(models.Model):
     id = models.UUIDField(primary_key=True, default=uuid.uuid4, editable=False)
     user = models.OneToOneField(User, on_delete=models.CASCADE, related_name="ai_quota")
     monthly_token_limit = models.PositiveIntegerField(null=True, blank=True)
+
+
+class ImportCategoryRule(models.Model):
+    """A user-taught mapping from a description keyword to a category.
+
+    During CSV import, any transaction whose (whole-row) signature contains the
+    keyword (case-insensitive substring) is assigned this category — before the
+    LLM is consulted. Rules persist across imports, so teaching a merchant once
+    makes it free and instant thereafter. Keyword is stored lowercased.
+    """
+    id = models.UUIDField(primary_key=True, default=uuid.uuid4, editable=False)
+    user = models.ForeignKey(User, on_delete=models.CASCADE, related_name="import_category_rules")
+    keyword = models.CharField(max_length=100)
+    category = models.ForeignKey(
+        TransactionCategory, on_delete=models.CASCADE, related_name="import_rules"
+    )
+    created_at = models.DateTimeField(auto_now_add=True)
+    updated_at = models.DateTimeField(auto_now=True)
+
+    class Meta:
+        unique_together = [["user", "keyword"]]
+        ordering = ["keyword"]
+
+    def __str__(self):
+        return f"{self.keyword} -> {self.category.name}"

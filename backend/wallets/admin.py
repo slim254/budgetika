@@ -10,6 +10,7 @@ from .models import (
     AIUsageLog,
     ModelPricing,
     UserAIQuota,
+    ImportCategoryRule,
 )
 
 admin.site.register(Transaction)
@@ -18,6 +19,12 @@ admin.site.register(TransactionCategory)
 admin.site.register(UserTransactionTag)
 admin.site.register(RecurringTransaction)
 admin.site.register(RecurringTransactionExecution)
+
+
+@admin.register(ImportCategoryRule)
+class ImportCategoryRuleAdmin(admin.ModelAdmin):
+    list_display = ("keyword", "category", "user", "updated_at")
+    search_fields = ("keyword",)
 
 
 @admin.register(AIUsageLog)

@@ -14,7 +14,31 @@ from django.db.models.functions import Coalesce, TruncMonth
 from django.utils import timezone
 
 
-from .models import ExchangeRate, SavingsGoal, Transaction, TransactionCategory, UserTransactionTag, Wallet
+from .models import ExchangeRate, ImportCategoryRule, SavingsGoal, Transaction, TransactionCategory, UserTransactionTag, Wallet
+
+
+def suggest_keyword(signature: str) -> str:
+    """Guess a merchant keyword from a transaction signature.
+
+    Takes the leading run of purely-alphabetic tokens (merchant names usually
+    lead), stopping at the first token with a digit/symbol. Falls back to the
+    longest alphabetic token. The result is editable by the user, so an
+    imperfect guess is fine. Unicode-aware (handles Polish characters).
+    """
+    tokens = [t for t in re.split(r"[\s|]+", signature) if t]
+    leading = []
+    for t in tokens:
+        if t.isalpha() and len(t) >= 2:
+            leading.append(t)
+        else:
+            break
+    if leading:
+        return " ".join(leading)[:100]
+    alpha = [re.sub(r"[\W\d_]+", "", t) for t in tokens]  # keep letters only
+    alpha = [a for a in alpha if len(a) >= 3]
+    if alpha:
+        return max(alpha, key=len)[:100]
+    return tokens[0][:100] if tokens else ""
 
 
 def get_rate(base: str, quote: str, rate_date: _date) -> Decimal:
@@ -95,7 +119,7 @@ class GenericCSVImportService:
             "unique_values": {k: sorted(list(v)) for k, v in unique_values.items()},
         }
 
-    def execute(self, column_mapping, amount_config, filters=None, ai_categories=None):
+    def execute(self, column_mapping, amount_config, filters=None, ai_categories=None, rules=None):
         """
         Import transactions using user's column mapping.
 
@@ -106,6 +130,12 @@ class GenericCSVImportService:
             category_id} => AI review mode: keep mapped values that match an
             existing category, fill the rest from the AI suggestion map, and
             never auto-create categories.
+
+        rules: optional list of {"keyword", "category_id"} to upsert as durable
+            ImportCategoryRule rows before importing. In AI mode, ALL of the
+            user's saved rules (plus these) are applied by keyword substring, so
+            teaching a merchant once cascades to every similar row now and on
+            future imports.
 
         Args:
             column_mapping: {'amount': 'CSV Column Name', 'date': 'CSV Column', ...}
@@ -131,6 +161,11 @@ class GenericCSVImportService:
             }
         """
         self.ai_categories = ai_categories
+
+        # In AI mode, persist any newly-taught rules and load the full rule set.
+        if ai_categories is not None:
+            self._upsert_rules(rules or [])
+            self._load_rules()
 
         # Parse if not already done (user might call execute directly)
         if self.rows is None:
@@ -510,6 +545,39 @@ class GenericCSVImportService:
         """Normalize a signature into a stable dedup key."""
         return re.sub(r"\s+", " ", signature).strip().lower()
 
+    def _upsert_rules(self, rules):
+        """Persist newly-taught {keyword, category_id} rules (idempotent)."""
+        _, by_id = self._existing_categories()
+        for rule in rules:
+            keyword = (rule.get("keyword") or "").strip().lower()
+            category = by_id.get(rule.get("category_id"))
+            if not keyword or category is None:
+                continue
+            ImportCategoryRule.objects.update_or_create(
+                user=self.user, keyword=keyword, defaults={"category": category}
+            )
+
+    def _load_rules(self):
+        """Load the user's rules as (keyword, category) sorted longest-first.
+
+        Longest keyword first so the most specific rule wins on overlap.
+        """
+        self._rules = [
+            (r.keyword, r.category)
+            for r in ImportCategoryRule.objects.filter(user=self.user).select_related("category")
+        ]
+        self._rules.sort(key=lambda kc: len(kc[0]), reverse=True)
+
+    def _match_rule(self, signature):
+        """Return the category for the most specific rule whose keyword is in signature."""
+        if not getattr(self, "_rules", None):
+            return None
+        haystack = signature.lower()
+        for keyword, category in self._rules:
+            if keyword in haystack:
+                return category
+        return None
+
     def build_signature(self, row, column_mapping):
         """Join all descriptive column values, excluding the mapped date & amount.
 
@@ -576,9 +644,11 @@ class GenericCSVImportService:
         by_name, by_id = self._existing_categories()
         if mapped_val and mapped_val.lower() in by_name:
             return by_name[mapped_val.lower()]          # keep matching mapped value
-        key = self._norm(self.build_signature(row, column_mapping))
-        cat_id = self.ai_categories.get(key)
-        return by_id.get(cat_id) if cat_id else None    # AI suggestion, else Uncategorized
+        signature = self.build_signature(row, column_mapping)
+        cat_id = self.ai_categories.get(self._norm(signature))
+        if cat_id:
+            return by_id.get(cat_id)                     # one-off exact override wins
+        return self._match_rule(signature)              # learned rule, else Uncategorized
 
     def _get_or_create_category(self, category_name):
         """

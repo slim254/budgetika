@@ -11,7 +11,7 @@ from rest_framework.pagination import CursorPagination
 from rest_framework.decorators import action
 from rest_framework.permissions import IsAuthenticated
 from rest_framework_simplejwt.authentication import JWTAuthentication
-from .models import Transaction, UserTransactionTag, Wallet, TransactionCategory, RecurringTransaction, RecurringTransactionExecution, BudgetRule, BudgetMonthOverride, UserProfile, SavingsGoal
+from .models import Transaction, UserTransactionTag, Wallet, TransactionCategory, RecurringTransaction, RecurringTransactionExecution, BudgetRule, BudgetMonthOverride, UserProfile, SavingsGoal, ImportCategoryRule
 from .serializers import (
     TagSerializer, TransactionSerializer, WalletSerializer, CategorySerializer,
     CSVParseSerializer, CSVExecuteSerializer,
@@ -19,10 +19,11 @@ from .serializers import (
     RecurringTransactionSerializer, RecurringTransactionExecutionSerializer,
     BudgetRuleSerializer, BudgetOverrideSerializer, BudgetSummarySerializer,
     UserProfileSerializer, WalletTransferSerializer, SavingsGoalSerializer,
+    ImportCategoryRuleSerializer,
 )
 from rest_framework.views import APIView
 from rest_framework.response import Response
-from .services import GenericCSVImportService, DashboardService, get_rate, SavingsGoalService
+from .services import GenericCSVImportService, DashboardService, get_rate, SavingsGoalService, suggest_keyword
 from .ai import ai_service, categorize_signatures
 import json
 
@@ -527,6 +528,7 @@ class CSVExecuteView(APIView):
         }
 
         ai_categories = None
+        rules = None
         try:
             # Parse JSON strings to Python objects
             if 'column_mapping' in request.data:
@@ -537,6 +539,8 @@ class CSVExecuteView(APIView):
                 data['filters'] = json.loads(request.data['filters'])
             if 'ai_categories' in request.data:
                 ai_categories = json.loads(request.data['ai_categories'])
+            if 'rules' in request.data:
+                rules = json.loads(request.data['rules'])
         except json.JSONDecodeError as e:
             return Response(
                 {"error": f"Invalid JSON in request: {str(e)}"},
@@ -555,10 +559,13 @@ class CSVExecuteView(APIView):
         # Only pass a dict through (None => legacy auto-create behavior).
         if not isinstance(ai_categories, dict):
             ai_categories = None
+        if not isinstance(rules, list):
+            rules = None
 
         service = GenericCSVImportService(request.user, wallet, csv_file)
         result = service.execute(
-            column_mapping, amount_config, filters, ai_categories=ai_categories
+            column_mapping, amount_config, filters,
+            ai_categories=ai_categories, rules=rules,
         )
 
         if result.get('success'):
@@ -613,18 +620,47 @@ class CSVCategorizeView(APIView):
         by_name = {c.name.lower(): c for c in categories}
         names = [c.name for c in categories]
 
-        items = [(u["key"], u["signature"]) for u in uniques]
-        mapping, warning, quota_exceeded = categorize_signatures(request.user, items, names)
+        # Apply the user's learned rules first (longest keyword wins) — these
+        # skip the LLM entirely, so known merchants are free, instant, and
+        # consistent. Only truly-unknown descriptions go to the model.
+        rules = list(
+            ImportCategoryRule.objects.filter(user=request.user).select_related("category")
+        )
+        rules.sort(key=lambda r: len(r.keyword), reverse=True)
+
+        def match_rule(signature):
+            haystack = signature.lower()
+            for rule in rules:
+                if rule.keyword in haystack:
+                    return rule
+            return None
+
+        resolved = {}   # key -> (category, keyword, source)
+        to_llm = []
+        for u in uniques:
+            rule = match_rule(u["signature"])
+            if rule is not None:
+                resolved[u["key"]] = (rule.category, rule.keyword, "rule")
+            else:
+                to_llm.append((u["key"], u["signature"]))
+
+        mapping, warning, quota_exceeded = categorize_signatures(request.user, to_llm, names)
+        for key, name in mapping.items():
+            cat = by_name.get(name.lower())
+            if cat:
+                resolved[key] = (cat, None, "ai")
 
         suggestions = []
         for u in uniques:
-            cat = by_name.get(mapping.get(u["key"], "").lower())
+            cat, keyword, source = resolved.get(u["key"], (None, None, None))
             suggestions.append({
                 "key": u["key"],
                 "signature": u["signature"],
                 "count": u["count"],
                 "category_id": str(cat.id) if cat else None,
                 "category_name": cat.name if cat else None,
+                "keyword": keyword if keyword is not None else suggest_keyword(u["signature"]),
+                "source": source,
             })
 
         return Response({
@@ -1235,3 +1271,25 @@ class CategorizeView(APIView):
         match = next((c for c in categories if c.name.lower() == guess.lower()), None)
         suggestion = {"id": str(match.id), "name": match.name} if match else None
         return Response({"suggestion": suggestion, "usage_warning": warning})
+
+
+class ImportCategoryRuleList(generics.ListCreateAPIView):
+    """GET/POST /api/wallets/import-rules/ — the user's learned CSV categorization rules."""
+    serializer_class = ImportCategoryRuleSerializer
+    permission_classes = [IsAuthenticated]
+    authentication_classes = [JWTAuthentication]
+
+    def get_queryset(self):
+        return ImportCategoryRule.objects.filter(
+            user=self.request.user
+        ).select_related("category")
+
+
+class ImportCategoryRuleDetail(generics.DestroyAPIView):
+    """DELETE /api/wallets/import-rules/{id}/ — forget a learned rule."""
+    serializer_class = ImportCategoryRuleSerializer
+    permission_classes = [IsAuthenticated]
+    authentication_classes = [JWTAuthentication]
+
+    def get_queryset(self):
+        return ImportCategoryRule.objects.filter(user=self.request.user)

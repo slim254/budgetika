@@ -17,6 +17,7 @@ from .views import (
     WalletTransferView,
     SavingsGoalViewSet,
     CategorizeView,
+    ImportCategoryRuleList, ImportCategoryRuleDetail,
 )
 
 urlpatterns = [
@@ -49,6 +50,8 @@ urlpatterns = [
     path('<uuid:wallet_id>/import/parse/', CSVParseView.as_view(), name='csv-import-parse'),
     path('<uuid:wallet_id>/import/execute/', CSVExecuteView.as_view(), name='csv-import-execute'),
     path('<uuid:wallet_id>/import/categorize/', CSVCategorizeView.as_view(), name='csv-import-categorize'),
+    path('import-rules/', ImportCategoryRuleList.as_view(), name='import-rule-list'),
+    path('import-rules/<uuid:pk>/', ImportCategoryRuleDetail.as_view(), name='import-rule-detail'),
     path('<uuid:wallet_id>/export/', CSVExportView.as_view(), name='csv-export'),
 
     # Recurring transaction routes

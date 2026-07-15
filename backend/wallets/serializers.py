@@ -9,6 +9,7 @@ from .models import (
     BudgetRule,
     BudgetMonthOverride,
     SavingsGoal,
+    ImportCategoryRule,
 )
 from django.db.models import Sum
 from decimal import Decimal
@@ -356,6 +357,40 @@ class AmountConfigSerializer(serializers.Serializer):
     ])
     income_value = serializers.CharField(required=False, allow_blank=True)
     expense_value = serializers.CharField(required=False, allow_blank=True)
+
+
+class ImportCategoryRuleSerializer(serializers.ModelSerializer):
+    """A learned keyword -> category rule for CSV import auto-categorization."""
+    category = CategorySerializer(read_only=True)
+    category_id = serializers.UUIDField(write_only=True)
+
+    class Meta:
+        model = ImportCategoryRule
+        fields = ["id", "keyword", "category", "category_id", "updated_at"]
+        read_only_fields = ["id", "updated_at"]
+
+    def validate_category_id(self, value):
+        user = self.context["request"].user
+        if not TransactionCategory.objects.filter(id=value, user=user).exists():
+            raise serializers.ValidationError("Category not found.")
+        return value
+
+    def validate_keyword(self, value):
+        value = (value or "").strip().lower()
+        if not value:
+            raise serializers.ValidationError("Keyword is required.")
+        return value
+
+    def create(self, validated_data):
+        user = self.context["request"].user
+        category_id = validated_data.pop("category_id")
+        # Upsert so re-teaching the same keyword updates rather than errors.
+        rule, _ = ImportCategoryRule.objects.update_or_create(
+            user=user,
+            keyword=validated_data["keyword"],
+            defaults={"category_id": category_id},
+        )
+        return rule
 
 
 class CSVExecuteSerializer(serializers.Serializer):
