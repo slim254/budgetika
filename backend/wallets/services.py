@@ -69,7 +69,7 @@ class GenericCSVImportService:
         try:
             self.columns, self.rows = self._parse_csv()
         except Exception as e:
-            raise {"success": False, "error": f"Error parsing CSV: {str(e)}"}
+            raise ValueError(f"Error parsing CSV: {str(e)}")
 
         # Collect unique values per column (for filter dropdowns)
         unique_values = defaultdict(set)
@@ -174,23 +174,89 @@ class GenericCSVImportService:
         content = self.csv_file.read()
 
         if isinstance(content, bytes):
-            # utf-8-sig handles BOM (Byte Order Mark) that Excel adds
-            content = content.decode("utf-8-sig")
+            content = self._decode_bytes(content)
 
         lines = content.splitlines()
-        reader = csv.DictReader(lines)
-
-        if not reader.fieldnames:
+        if not lines:
             raise ValueError("CSV is empty or has no headers")
 
-        columns = list(reader.fieldnames)
+        delimiter = self._sniff_delimiter(lines[0])
+        reader = csv.reader(lines, delimiter=delimiter)
+        row_iter = iter(reader)
+
+        try:
+            header = next(row_iter)
+        except StopIteration:
+            raise ValueError("CSV is empty or has no headers")
+
+        # Bank exports (e.g. PKO BP) pad rows with several blank-named
+        # columns that hold extra description fields. csv.DictReader would
+        # collapse those duplicate "" keys and drop the data, so we name
+        # them ourselves before building row dicts.
+        columns = self._uniquify_headers(header)
+
         rows = []
-        for row_num, row in enumerate(reader, start=2):
+        for row_num, values in enumerate(row_iter, start=2):
+            # Skip blank lines (csv.reader yields [] / all-empty rows,
+            # unlike DictReader which drops them silently).
+            if not any(v.strip() for v in values):
+                continue
+            row = dict(zip(columns, values))
             rows.append((row_num, row))
             if len(rows) > 10000:
                 raise ValueError("CSV exceeds 10000 row limit")
 
         return columns, rows
+
+    @staticmethod
+    def _uniquify_headers(header):
+        """Give every column a unique, non-empty name.
+
+        Blank headers become "Column N" (1-based position); duplicate
+        names get a " (2)", " (3)" suffix. This keeps otherwise-lost
+        columns mappable in the import UI, which shows sample rows so the
+        user can tell what each generic name contains.
+        """
+        seen = {}
+        result = []
+        for index, name in enumerate(header, start=1):
+            name = (name or "").strip()
+            if not name:
+                name = f"Column {index}"
+            if name in seen:
+                seen[name] += 1
+                name = f"{name} ({seen[name]})"
+            else:
+                seen[name] = 1
+            result.append(name)
+        return result
+
+    @staticmethod
+    def _decode_bytes(raw):
+        """Decode raw CSV bytes, trying encodings in order of specificity.
+
+        Revolut/Wise export UTF-8; Polish banks (PKO BP, mBank) commonly
+        export Windows-1250. iso-8859-2 (Latin-2) is a related fallback,
+        and latin-1 decodes any byte so it is the final catch-all.
+        utf-8-sig strips the BOM that Excel prepends.
+        """
+        for encoding in ("utf-8-sig", "cp1250", "iso-8859-2", "latin-1"):
+            try:
+                return raw.decode(encoding)
+            except UnicodeDecodeError:
+                continue
+        return raw.decode("utf-8", errors="replace")
+
+    @staticmethod
+    def _sniff_delimiter(header_line):
+        """Pick the delimiter that appears most in the header row.
+
+        Handles comma (Revolut, mBank), semicolon (many Polish/German
+        banks) and tab. Defaults to comma when nothing else is present.
+        """
+        counts = {d: header_line.count(d) for d in (",", ";", "\t")}
+        best = max(counts, key=counts.get)
+        return best if counts[best] > 0 else ","
 
     def _import_row(self, row_num, row, column_mapping, amount_config):
         """
@@ -318,6 +384,40 @@ class GenericCSVImportService:
 
         raise ValueError(f"Unrecognized date format: {date_str}")
 
+    @staticmethod
+    def _clean_amount(amount_str):
+        """Normalise a raw amount string into a Decimal-parseable form.
+
+        Strips currency symbols/codes and thousands whitespace (Polish
+        banks use spaces or non-breaking spaces as thousands separators),
+        then normalises the decimal separator to a dot. Handles both US
+        (1,234.56) and European (1.234,56 or 1,59) conventions. A leading
+        +/- sign is preserved.
+        """
+        import re
+
+        s = amount_str.strip()
+        for token in ("$", "€", "£", "zł", "PLN", "USD", "EUR", "GBP",
+                      " ", "\xa0", " "):
+            s = s.replace(token, "")
+
+        if "," in s and "." in s:
+            if s.rfind(",") > s.rfind("."):
+                # European: 1.234,56 -> 1234.56
+                s = s.replace(".", "").replace(",", ".")
+            else:
+                # US: 1,234.56 -> 1234.56
+                s = s.replace(",", "")
+        elif "," in s:
+            # Comma only: decimal separator when it precedes 1-2 trailing
+            # digits (1,59 -> 1.59); otherwise a thousands separator.
+            if re.search(r",\d{1,2}$", s):
+                s = s.replace(",", ".")
+            else:
+                s = s.replace(",", "")
+
+        return s
+
     def _convert_amount(self, amount_str, row, column_mapping, amount_config):
         """
         Convert amount string to signed decimal based on configuration.
@@ -327,8 +427,7 @@ class GenericCSVImportService:
         """
         from decimal import Decimal, InvalidOperation
 
-        # Parse the amount string (remove currency symbols, commas, etc.)
-        cleaned = amount_str.replace(",", "").replace("$", "").replace("€", "").replace("£", "").strip()
+        cleaned = self._clean_amount(amount_str)
 
         try:
             amount = Decimal(cleaned)
