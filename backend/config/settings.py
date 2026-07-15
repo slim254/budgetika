@@ -164,3 +164,7 @@ AI_MODELS = {
     "budget_recommendations": "gpt-4o-mini",
     "chat": "gpt-4o",
 }
+
+# CSV import AI categorization
+AI_IMPORT_BATCH_SIZE = 40      # unique signatures per LLM call
+AI_IMPORT_MAX_UNIQUE = 500     # cap on unique descriptions categorized per import

@@ -165,3 +165,75 @@ class AIService:
 
 
 ai_service = AIService()
+
+
+import json
+import re
+
+
+def _parse_json_map(content: str) -> dict:
+    """Extract the first {...} block and parse it; return {} on any failure."""
+    if not content:
+        return {}
+    match = re.search(r"\{.*\}", content, re.DOTALL)
+    if not match:
+        return {}
+    try:
+        data = json.loads(match.group(0))
+    except json.JSONDecodeError:
+        return {}
+    return data if isinstance(data, dict) else {}
+
+
+def categorize_signatures(user, items, category_names, feature="auto_categorize", batch_size=None):
+    """Batch-categorize unique transaction signatures against the user's existing categories.
+
+    Args:
+        items: list of (key, signature) tuples — one per UNIQUE description.
+        category_names: allowed category names (existing, visible).
+
+    Returns:
+        (mapping, warning, quota_exceeded)
+        mapping: {key: canonical_category_name} — only keys the model mapped to a
+                 real existing category are present (Uncategorized/invalid omitted).
+        warning: last usage_warning dict from ai_service, or None.
+        quota_exceeded: True if the monthly quota ran out mid-batch (partial result).
+    """
+    batch_size = batch_size or settings.AI_IMPORT_BATCH_SIZE
+    valid = {n.lower(): n for n in category_names}
+    result: dict[str, str] = {}
+    warning = None
+    quota_exceeded = False
+
+    for start in range(0, len(items), batch_size):
+        batch = items[start:start + batch_size]
+        listing = "\n".join(f"{i}. {sig}" for i, (_, sig) in enumerate(batch))
+        system = (
+            "You categorize personal-finance transactions. For each numbered "
+            "transaction below, choose EXACTLY ONE category name verbatim from this "
+            "list, or 'Uncategorized' if none clearly fit.\n"
+            f"Categories: {', '.join(category_names) if category_names else '(none)'}\n"
+            'Reply ONLY with a JSON object mapping each number (as a string) to a '
+            'category name, e.g. {"0": "Groceries", "1": "Uncategorized"}.'
+        )
+        messages = [
+            {"role": "system", "content": system},
+            {"role": "user", "content": listing},
+        ]
+        try:
+            response, warning = ai_service.complete(user, feature, messages)
+        except QuotaExceededError:
+            quota_exceeded = True
+            break
+
+        for idx_str, name in _parse_json_map(response.content).items():
+            try:
+                idx = int(idx_str)
+            except (ValueError, TypeError):
+                continue
+            if 0 <= idx < len(batch):
+                canonical = valid.get(str(name).strip().lower())
+                if canonical:
+                    result[batch[idx][0]] = canonical
+
+    return result, warning, quota_exceeded
