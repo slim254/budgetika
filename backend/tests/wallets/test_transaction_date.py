@@ -36,8 +36,6 @@ class TestFutureTransactionDate(TestCase):
             "wallet": str(self.wallet.id),
         }
         response = self.client.post("/api/transactions/", payload, format="json")
-        # Print the observed behaviour for the debugging log:
-        print("STATUS:", response.status_code, "BODY:", response.data)
         self.assertEqual(response.status_code, 201)
         txn = Transaction.objects.get(id=response.data["id"])
         self.assertEqual(txn.date.date(), future)

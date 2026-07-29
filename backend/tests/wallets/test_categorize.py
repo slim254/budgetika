@@ -43,7 +43,9 @@ class TestCategorize(TestCase):
         self.assertEqual(res.data["suggestion"]["id"], str(self.dining.id))
 
     def test_unknown_category_returns_null_suggestion(self):
-        with patch("wallets.ai.get_provider", return_value=mock_provider("Groceries")):
+        # "Zzyzx Widgets" is not a default category (see wallets/constants.py) and
+        # was never created in setUp, so it can't match the user's category list.
+        with patch("wallets.ai.get_provider", return_value=mock_provider("Zzyzx Widgets")):
             res = self.client.post("/api/wallets/categorize/", {"note": "milk"}, format="json")
         self.assertEqual(res.status_code, 200)
         self.assertIsNone(res.data["suggestion"])

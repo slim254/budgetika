@@ -71,6 +71,10 @@ Balance is **never stored**. It is computed on every serialization:
 balance = initial_value + sum(transaction.amount for all transactions)
 ```
 
+### Wallet Deletion
+
+`DELETE /api/wallets/{wallet_id}/` is a soft delete — sets `is_archived=True`, transactions are preserved. The wallet list excludes archived wallets; the wallet detail endpoint still returns them (so a direct link to an archived wallet keeps working).
+
 ### Savings Goals
 
 - Per-wallet financial planning targets (e.g., "Wedding €500 by May 25")
@@ -80,14 +84,15 @@ balance = initial_value + sum(transaction.amount for all transactions)
 
 ## API Overview
 
-All endpoints require JWT auth (`Authorization: Bearer <token>`).
+All endpoints require JWT auth (`Authorization: Bearer <token>`). Access tokens live 60 min, refresh tokens 30 days, with rotation on (`SIMPLE_JWT` in `backend/config/settings.py`).
 
 ```
 GET/POST   /api/wallets/
-GET/PATCH/DELETE  /api/wallets/{wallet_id}/
-GET/POST   /api/wallets/{wallet_id}/transactions/?month=M&year=Y
+GET/PATCH/DELETE  /api/wallets/{wallet_id}/            (DELETE = archive, see below)
+GET/POST   /api/wallets/{wallet_id}/transactions/?month=M&year=Y   (or date_from=&date_to=, unpaginated)
 GET/PATCH/DELETE  /api/wallets/{wallet_id}/transactions/{id}/
 GET/PATCH/DELETE  /api/transactions/{id}/
+GET        /api/wallets/{wallet_id}/export/            (CSV download; optional month=, year=, date_from=, date_to=)
 GET/POST   /api/wallets/categories/
 GET/PATCH/DELETE  /api/wallets/categories/{id}/
 GET/POST   /api/wallets/tags/
@@ -124,6 +129,14 @@ Business logic lives in `backend/wallets/services.py` (`GenericCSVImportService`
 
 **Learned category rules (`ImportCategoryRule`):** a user-taught `keyword → category` mapping. During import, any transaction whose signature contains the keyword (case-insensitive substring, longest keyword wins) is categorized **before** the LLM is called — so teaching a merchant once cascades to all similar rows and persists across future imports (free/instant thereafter). In the review step each suggestion carries an editable `keyword` (auto-detected merchant via `services.suggest_keyword()`) and a `source` of `rule`/`ai`/`null`. Execute's `rules` param (list of `{keyword, category_id}`) upserts them. Resolution order in AI mode: matching mapped value → exact-signature `ai_categories` override → learned rule → Uncategorized. Manage via `GET/POST /api/wallets/import-rules/` and `DELETE /api/wallets/import-rules/{id}/` (or Django admin).
 
+## Data Storage & Backups
+
+The SQLite DB lives outside the repo at `~/.budgeting-app/db.sqlite3`, set via `DATABASE_URL` in `backend/.env` (default falls back to `backend/db.sqlite3` if unset). Two management commands, both write under `~/.budgeting-app/`:
+- `python manage.py backup_db` — sqlite3 online-backup copy to `~/.budgeting-app/backups/`, prunes anything older than 30 days (keeps at least 5)
+- `python manage.py export_all` — human-readable per-entity CSV dump to `~/.budgeting-app/exports/`
+
+A launchd agent (`scripts/`, installed via `scripts/install-backup-agent.sh`) runs `backup_db` daily. Full self-host setup/restore steps: see `RUNBOOK.md`.
+
 ## Currencies
 
 Supported: `usd`, `eur`, `gbp`, `pln`. A transaction's currency must match its wallet's currency (enforced in `TransactionSerializer.validate()`).
@@ -133,7 +146,6 @@ Supported: `usd`, `eur`, `gbp`, `pln`. A transaction's currency must match its w
 Next up (see ROADMAP.md for full build order):
 - AI auto-categorization, receipt scan, budget recommendations, chat
 - Toast messages
-- CSV export
 - Over-budget alerts
 - Auth & account management
 - Feature flags
