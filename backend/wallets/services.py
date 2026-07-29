@@ -4,6 +4,7 @@ from datetime import timedelta
 from math import ceil
 import csv
 import datetime
+import logging
 import re
 from datetime import date as _date
 import requests
@@ -15,6 +16,8 @@ from django.utils import timezone
 
 
 from .models import ExchangeRate, ImportCategoryRule, SavingsGoal, Transaction, TransactionCategory, UserTransactionTag, Wallet
+
+logger = logging.getLogger(__name__)
 
 
 def suggest_keyword(signature: str) -> str:
@@ -256,8 +259,21 @@ class GenericCSVImportService:
         if self.rows is None:
             try:
                 self.columns, self.rows = self._parse_csv()
-            except Exception as e:
+            except ValueError as e:
+                # _parse_csv only raises ValueError for controlled,
+                # user-actionable conditions (empty file, row limit, ...),
+                # so its message is safe to return as-is.
                 return {"success": False, "error": str(e)}
+            except Exception:
+                # Anything else is unexpected and str(e) could leak file
+                # paths or internals. Log it and return a generic message,
+                # matching the CSVExecuteView hardening around service.execute().
+                logger.exception("CSV parse failed during execute()")
+                return {
+                    "success": False,
+                    "error": "Could not import this CSV file. Check the file "
+                             "and try again.",
+                }
 
         # Validate required mappings
         if "amount" not in column_mapping or "date" not in column_mapping:
@@ -974,6 +990,11 @@ class DashboardService:
                 "expenses_this_month": expenses,
             })
 
+        # Deliberately NOT filtering out archived wallets here: category
+        # spending is historical truth (what was actually spent this month),
+        # so a wallet archived after the fact should still count. Contrast
+        # with _wallets_with_monthly_aggregates() above, which excludes
+        # archived wallets from balance totals.
         category_qs = Transaction.objects.filter(
             wallet__user=self.user,
             amount__lt=0,
@@ -1077,7 +1098,12 @@ class DashboardService:
     def _wallets_with_monthly_aggregates(self):
         zero = Decimal("0")
         decimal_field = DecimalField(max_digits=12, decimal_places=2)
-        return Wallet.objects.filter(user=self.user).annotate(
+        # Archived wallets are excluded here: they should not contribute to
+        # the dashboard's balance totals or wallet list. This is deliberate
+        # and differs from _category_spending's callers and _monthly_trend
+        # below, which intentionally keep archived wallets' transaction
+        # history (see comments there).
+        return Wallet.objects.filter(user=self.user, is_archived=False).annotate(
             total_transactions=Coalesce(
                 Sum("transactions__amount"),
                 zero,
@@ -1151,6 +1177,12 @@ class DashboardService:
     def _monthly_trend(self, months_back=6):
         # First day of the month, months_back months ago. Avoids the
         # spec's inline arithmetic edge case at month==6.
+        #
+        # Deliberately NOT filtering out archived wallets: the trend is
+        # historical truth (income/expenses that actually happened each
+        # month), so archiving a wallet later shouldn't rewrite the past.
+        # Contrast with _wallets_with_monthly_aggregates() above, which
+        # excludes archived wallets from current balance totals.
         cutoff = self._month_floor(self._shift_months(self.now, -(months_back - 1)))
         zero = Decimal("0")
         decimal_field = DecimalField(max_digits=12, decimal_places=2)

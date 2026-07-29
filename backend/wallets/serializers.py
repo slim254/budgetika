@@ -783,6 +783,10 @@ class WalletTransferSerializer(serializers.Serializer):
             to_wallet = Wallet.objects.get(id=data['to_wallet'], user=user)
         except Wallet.DoesNotExist:
             raise serializers.ValidationError({"to_wallet": "Wallet not found or doesn't belong to you."})
+        if from_wallet.is_archived:
+            raise serializers.ValidationError({"from_wallet": "Cannot transfer from an archived wallet."})
+        if to_wallet.is_archived:
+            raise serializers.ValidationError({"to_wallet": "Cannot transfer to an archived wallet."})
         if str(data['from_wallet']) == str(data['to_wallet']):
             raise serializers.ValidationError("from_wallet and to_wallet must be different.")
         if data['from_amount'] <= 0:

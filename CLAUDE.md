@@ -145,7 +145,6 @@ Supported: `usd`, `eur`, `gbp`, `pln`. A transaction's currency must match its w
 
 Next up (see ROADMAP.md for full build order):
 - AI auto-categorization, receipt scan, budget recommendations, chat
-- Toast messages
 - Over-budget alerts
 - Auth & account management
 - Feature flags

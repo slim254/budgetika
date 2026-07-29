@@ -759,6 +759,51 @@ class DashboardBaseCurrencyTest(TestCase):
             Decimal("100.00"),
         )
 
+    def test_dashboard_excludes_archived_wallet_from_balance_and_list(self):
+        archived = Wallet.objects.create(
+            user=self.user, name="Old Wallet",
+            currency="pln", initial_value=Decimal("500"),
+            is_archived=True,
+        )
+        response = self.client.get("/api/dashboard/")
+        self.assertEqual(response.status_code, 200)
+        # Only the non-archived wallet's balance counts
+        self.assertEqual(
+            Decimal(str(response.data["summary"]["total_balance"])),
+            Decimal("100.00"),
+        )
+        wallet_ids = [w["id"] for w in response.data["wallets"]]
+        self.assertNotIn(str(archived.id), [str(i) for i in wallet_ids])
+        self.assertEqual(len(response.data["wallets"]), 1)
+
+    def test_dashboard_keeps_archived_wallet_history_in_trend_and_categories(self):
+        archived = Wallet.objects.create(
+            user=self.user, name="Old Wallet",
+            currency="pln", initial_value=Decimal("0"),
+            is_archived=True,
+        )
+        category, _ = TransactionCategory.objects.get_or_create(
+            user=self.user, name="Groceries",
+            defaults={"icon": "cart", "color": "#22C55E"},
+        )
+        Transaction.objects.create(
+            wallet=archived, created_by=self.user,
+            note="Old spend", amount=Decimal("-50"), currency="pln",
+            category=category,
+        )
+        response = self.client.get("/api/dashboard/")
+        self.assertEqual(response.status_code, 200)
+        # Historical spend from the archived wallet still shows up in the
+        # category breakdown and monthly trend (deliberate: history isn't
+        # rewritten just because a wallet was later archived).
+        category_totals = {
+            row["category_name"]: row["total_amount"]
+            for row in response.data["spending_by_category"]
+        }
+        self.assertEqual(Decimal(str(category_totals["Groceries"])), Decimal("-50.00"))
+        current_month_trend = response.data["monthly_trend"][-1]
+        self.assertEqual(Decimal(str(current_month_trend["expenses"])), Decimal("50.00"))
+
 
 class TransactionSerializerTransferFieldsTest(TestCase):
     def setUp(self):
@@ -842,6 +887,20 @@ class WalletTransferTest(TestCase):
     def test_from_amount_must_be_positive(self):
         res = self._create_transfer(from_amount="-100")
         self.assertEqual(res.status_code, 400)
+
+    def test_cannot_transfer_from_archived_wallet(self):
+        self.w1.is_archived = True
+        self.w1.save()
+        res = self._create_transfer()
+        self.assertEqual(res.status_code, 400)
+        self.assertIn("from_wallet", res.data)
+
+    def test_cannot_transfer_to_archived_wallet(self):
+        self.w2.is_archived = True
+        self.w2.save()
+        res = self._create_transfer()
+        self.assertEqual(res.status_code, 400)
+        self.assertIn("to_wallet", res.data)
 
     def test_delete_removes_both_legs(self):
         res = self._create_transfer()
