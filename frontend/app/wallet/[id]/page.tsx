@@ -21,6 +21,7 @@ import { BudgetPanel } from "@/components/BudgetPanel";
 import { BudgetManagementDialog } from "@/components/BudgetManagementDialog";
 import { SavingsGoalsPanel } from "@/components/SavingsGoalsPanel";
 import { DeleteWalletDialog } from "@/components/DeleteWalletDialog";
+import { WalletDialog } from "@/components/WalletDialog";
 import { exportWalletCsv } from "@/api/exports";
 import { toast } from "sonner";
 
@@ -40,6 +41,7 @@ export default function WalletPage() {
   const [transferDialogOpen, setTransferDialogOpen] = useState(false);
   const [editingTransfer, setEditingTransfer] = useState<Transaction | null>(null);
   const [deleteWalletOpen, setDeleteWalletOpen] = useState(false);
+  const [editWalletOpen, setEditWalletOpen] = useState(false);
 
   // Search mode
   const [searchMode, setSearchMode] = useState(false);
@@ -368,6 +370,13 @@ export default function WalletPage() {
                   onClick={() => router.push(`/wallet/${params.id}/metrics`)}
                 >
                   <BarChart3 className="mr-2 h-4 w-4" /> View metrics
+                </Button>
+                <Button
+                  variant="outline"
+                  size="sm"
+                  onClick={() => setEditWalletOpen(true)}
+                >
+                  <Edit className="mr-2 h-4 w-4" /> Edit Wallet
                 </Button>
                 <Button
                   variant="outline"
@@ -774,6 +783,14 @@ export default function WalletPage() {
           walletId={wallet.id}
           walletName={wallet.name}
           onDeleted={() => router.push("/dashboard")}
+        />
+      )}
+      {wallet && (
+        <WalletDialog
+          open={editWalletOpen}
+          onOpenChange={setEditWalletOpen}
+          wallet={wallet}
+          onSaved={fetchWallet}
         />
       )}
     </ProtectedRoute>

@@ -2,7 +2,7 @@
 
 import { useState, useEffect } from "react";
 import { axiosInstance } from "@/api/axiosInstance";
-import { WalletFormData, Currency } from "@/models/wallets";
+import { Wallet, WalletFormData, Currency } from "@/models/wallets";
 import { toast } from "sonner";
 import {
     Dialog,
@@ -27,9 +27,12 @@ interface WalletDialogProps {
     open: boolean;
     onOpenChange: (open: boolean) => void;
     onSaved: () => void;
+    // When set, the dialog edits this wallet (PATCH) instead of creating one.
+    wallet?: Wallet | null;
 }
 
-export function WalletDialog({ open, onOpenChange, onSaved }: WalletDialogProps) {
+export function WalletDialog({ open, onOpenChange, onSaved, wallet }: WalletDialogProps) {
+    const isEdit = !!wallet;
     const [name, setName] = useState("");
     const [initialValue, setInitialValue] = useState("0");
     const [currency, setCurrency] = useState<Currency>("usd");
@@ -38,12 +41,19 @@ export function WalletDialog({ open, onOpenChange, onSaved }: WalletDialogProps)
 
     useEffect(() => {
         if (!open) {
+            setError(null);
+            return;
+        }
+        if (wallet) {
+            setName(wallet.name);
+            setInitialValue(String(wallet.initial_value));
+            setCurrency(wallet.currency);
+        } else {
             setName("");
             setInitialValue("0");
             setCurrency("usd");
-            setError(null);
         }
-    }, [open]);
+    }, [open, wallet]);
 
     async function handleSave() {
         if (!name.trim()) {
@@ -59,14 +69,20 @@ export function WalletDialog({ open, onOpenChange, onSaved }: WalletDialogProps)
         setSaving(true);
         setError(null);
         try {
-            const payload: WalletFormData = { name: name.trim(), initial_value: iv, currency };
-            await axiosInstance.post("wallets/", payload);
-            toast.success("Wallet created");
+            if (isEdit && wallet) {
+                const payload: Partial<WalletFormData> = { name: name.trim(), initial_value: iv };
+                await axiosInstance.patch(`wallets/${wallet.id}/`, payload);
+                toast.success("Wallet updated");
+            } else {
+                const payload: WalletFormData = { name: name.trim(), initial_value: iv, currency };
+                await axiosInstance.post("wallets/", payload);
+                toast.success("Wallet created");
+            }
             onOpenChange(false);
             onSaved();
         } catch (err) {
             const data = (err as { response?: { data?: Record<string, string[]> } })?.response?.data;
-            const msg = data ? Object.values(data).flat().join(" ") : "Failed to create wallet.";
+            const msg = data ? Object.values(data).flat().join(" ") : `Failed to ${isEdit ? "update" : "create"} wallet.`;
             setError(msg);
             toast.error("Failed to save wallet");
         } finally {
@@ -78,7 +94,7 @@ export function WalletDialog({ open, onOpenChange, onSaved }: WalletDialogProps)
         <Dialog open={open} onOpenChange={onOpenChange}>
             <DialogContent className="sm:max-w-md">
                 <DialogHeader>
-                    <DialogTitle>New Wallet</DialogTitle>
+                    <DialogTitle>{isEdit ? "Edit Wallet" : "New Wallet"}</DialogTitle>
                 </DialogHeader>
 
                 <div className="grid gap-4 py-2">
@@ -94,7 +110,7 @@ export function WalletDialog({ open, onOpenChange, onSaved }: WalletDialogProps)
 
                     <div className="grid gap-1">
                         <Label htmlFor="wallet-currency">Currency</Label>
-                        <Select value={currency} onValueChange={(v) => setCurrency(v as Currency)}>
+                        <Select value={currency} onValueChange={(v) => setCurrency(v as Currency)} disabled={isEdit}>
                             <SelectTrigger id="wallet-currency">
                                 <SelectValue />
                             </SelectTrigger>
@@ -106,6 +122,11 @@ export function WalletDialog({ open, onOpenChange, onSaved }: WalletDialogProps)
                                 ))}
                             </SelectContent>
                         </Select>
+                        {isEdit && (
+                            <p className="text-xs text-muted-foreground">
+                                Currency can&apos;t be changed after a wallet is created.
+                            </p>
+                        )}
                     </div>
 
                     <div className="grid gap-1">
@@ -128,7 +149,7 @@ export function WalletDialog({ open, onOpenChange, onSaved }: WalletDialogProps)
                         Cancel
                     </Button>
                     <Button onClick={handleSave} disabled={saving}>
-                        {saving ? "Creating…" : "Create Wallet"}
+                        {saving ? "Saving…" : isEdit ? "Save Changes" : "Create Wallet"}
                     </Button>
                 </div>
             </DialogContent>

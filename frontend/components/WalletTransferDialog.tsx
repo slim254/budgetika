@@ -4,6 +4,7 @@ import { useState, useEffect, useRef } from "react";
 import { Wallet, TransferFormData, Currency } from "@/models/wallets";
 import { createTransfer, updateTransfer, deleteTransfer } from "@/api/transfers";
 import { getExchangeRate } from "@/api/exchangeRates";
+import { formatDateForAPI } from "@/lib/dates";
 import { toast } from "sonner";
 import {
     Dialog,
@@ -51,7 +52,7 @@ export function WalletTransferDialog({
     editValues,
 }: WalletTransferDialogProps) {
     const isEdit = !!editTransferRef;
-    const today = new Date().toISOString().slice(0, 10);
+    const today = formatDateForAPI(new Date());
 
     const [toWalletId, setToWalletId] = useState("");
     const [fromAmount, setFromAmount] = useState("");

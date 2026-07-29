@@ -38,6 +38,7 @@ import {
 import { Check, ChevronsUpDown, Plus, EyeOff, Sparkles } from "lucide-react";
 import { toast } from "sonner";
 import { cn } from "@/lib/utils";
+import { formatDateForAPI } from "@/lib/dates";
 import { DynamicIcon } from "@/components/IconPicker";
 import { categorizeNote, CategorySuggestion } from "@/api/ai";
 
@@ -81,7 +82,7 @@ export function TransactionDialog({
     note: "",
     amount: 0,  // Always stored as positive in form, sign applied on submit
     currency: currency,
-    date: new Date().toISOString().split("T")[0],
+    date: formatDateForAPI(new Date()),
     category: null,
     tag_ids: [],
   });
@@ -284,7 +285,7 @@ export function TransactionDialog({
           note: "",
           amount: 0,
           currency: currency,
-          date: new Date().toISOString().split("T")[0],
+          date: formatDateForAPI(new Date()),
           category: null,
           tag_ids: [],
         });
@@ -462,7 +463,7 @@ export function TransactionDialog({
             note: "",
             amount: 0,
             currency: currency,
-            date: new Date().toISOString().split("T")[0],
+            date: formatDateForAPI(new Date()),
             category: formData.category,
             tag_ids: formData.tag_ids,
           });
