@@ -71,9 +71,16 @@ export function WalletTransferDialog({
     const [confirmDelete, setConfirmDelete] = useState(false);
     const [error, setError] = useState<string | null>(null);
     const rateTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
-    // Set while an edit is being populated, so the exchange-rate autofill does
-    // not immediately overwrite the transfer's stored received amount.
-    const skipNextRateFetchRef = useRef(false);
+    // The exchange-rate autofill must react to the *user* editing a rate input,
+    // never to the form being populated — otherwise opening an existing
+    // cross-currency transfer immediately overwrites its stored received amount
+    // with today's quote. This is a plain latch rather than a one-shot token:
+    // the dialog is never unmounted, so a one-shot could be consumed by an
+    // effect pass still holding the previous session's values, re-arming the
+    // autofill for the commit that actually carries the new ones. The populate
+    // effect is declared before the rate effect, so it always lowers the latch
+    // earlier in the same commit.
+    const userEditedRateInputRef = useRef(false);
 
     // In create mode the sending wallet is always the wallet being viewed; in
     // edit mode it comes from the transfer itself (the negative leg).
@@ -86,12 +93,13 @@ export function WalletTransferDialog({
     // value: re-running on each render would stomp on what the user is typing.
     useEffect(() => {
         if (!open) {
+            userEditedRateInputRef.current = false;
             setConfirmDelete(false);
             setError(null);
             return;
         }
         if (isEdit && editValues) {
-            skipNextRateFetchRef.current = true;
+            userEditedRateInputRef.current = false;
             setFromWalletId(editValues.from_wallet_id);
             setToWalletId(editValues.to_wallet_id);
             setFromAmount(String(editValues.from_amount));
@@ -99,7 +107,7 @@ export function WalletTransferDialog({
             setDate(editValues.date.slice(0, 10));
             setNote(editValues.note);
         } else {
-            skipNextRateFetchRef.current = false;
+            userEditedRateInputRef.current = false;
             setFromWalletId(currentWalletId);
             const selectable = wallets.filter((w) => w.id !== currentWalletId);
             // Only reset toWalletId if not already selected
@@ -116,13 +124,10 @@ export function WalletTransferDialog({
 
     // Auto-fill to_amount via exchange rate with 300ms debounce
     useEffect(() => {
+        if (!userEditedRateInputRef.current) return;
         if (!open || !isCrossCurrency || !fromAmount || !date || !toWallet || !fromWallet) return;
         const amount = parseFloat(fromAmount);
         if (isNaN(amount) || amount <= 0) return;
-        if (skipNextRateFetchRef.current) {
-            skipNextRateFetchRef.current = false;
-            return;
-        }
 
         if (rateTimerRef.current) clearTimeout(rateTimerRef.current);
         rateTimerRef.current = setTimeout(async () => {
@@ -143,6 +148,23 @@ export function WalletTransferDialog({
             if (rateTimerRef.current) clearTimeout(rateTimerRef.current);
         };
     }, [fromAmount, date, toWalletId, open, isCrossCurrency, toWallet, fromWallet]);
+
+    // The three inputs the exchange rate is derived from. Changing any of them
+    // by hand is what arms the autofill — programmatic population never does.
+    function handleFromAmountChange(value: string) {
+        userEditedRateInputRef.current = true;
+        setFromAmount(value);
+    }
+
+    function handleDateChange(value: string) {
+        userEditedRateInputRef.current = true;
+        setDate(value);
+    }
+
+    function handleToWalletChange(value: string) {
+        userEditedRateInputRef.current = true;
+        setToWalletId(value);
+    }
 
     async function handleSave() {
         if (!toWalletId || !fromAmount || !date) {
@@ -232,7 +254,7 @@ export function WalletTransferDialog({
 
                     <div className="grid gap-1">
                         <Label>To wallet</Label>
-                        <Select value={toWalletId} onValueChange={setToWalletId} disabled={isEdit}>
+                        <Select value={toWalletId} onValueChange={handleToWalletChange} disabled={isEdit}>
                             <SelectTrigger>
                                 <SelectValue placeholder="Select wallet" />
                             </SelectTrigger>
@@ -253,7 +275,7 @@ export function WalletTransferDialog({
                             min="0"
                             step="0.01"
                             value={fromAmount}
-                            onChange={(e) => setFromAmount(e.target.value)}
+                            onChange={(e) => handleFromAmountChange(e.target.value)}
                             placeholder="0.00"
                         />
                     </div>
@@ -281,7 +303,7 @@ export function WalletTransferDialog({
                         <Input
                             type="date"
                             value={date}
-                            onChange={(e) => setDate(e.target.value)}
+                            onChange={(e) => handleDateChange(e.target.value)}
                         />
                     </div>
 

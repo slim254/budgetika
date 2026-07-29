@@ -5,7 +5,7 @@ import ProtectedRoute from "@/components/ProtectedRoute";
 import { Button } from "@/components/ui/button";
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/components/ui/card";
 import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from "@/components/ui/table";
-import { ArrowLeft, Plus, Edit, Trash2, TrendingUp, TrendingDown, Wallet as WalletIcon, Upload, BarChart3, Search, ArrowLeftRight, Download } from "lucide-react";
+import { ArrowLeft, Plus, Edit, Trash2, TrendingUp, TrendingDown, Wallet as WalletIcon, Upload, BarChart3, Search, ArrowLeftRight, Download, Loader2 } from "lucide-react";
 import { DynamicIcon } from "@/components/IconPicker";
 import { UserMenu } from "@/components/UserMenu";
 import { useParams, useRouter, useSearchParams } from "next/navigation";
@@ -51,6 +51,8 @@ export default function WalletPage() {
   const [transferDialogOpen, setTransferDialogOpen] = useState(false);
   const [editingTransfer, setEditingTransfer] = useState<Transaction | null>(null);
   const [editTransferValues, setEditTransferValues] = useState<TransferEditValues | null>(null);
+  // Id of the transfer row whose peer leg is currently being fetched.
+  const [loadingTransferId, setLoadingTransferId] = useState<string | null>(null);
   const [deleteWalletOpen, setDeleteWalletOpen] = useState(false);
   const [editWalletOpen, setEditWalletOpen] = useState(false);
 
@@ -268,50 +270,58 @@ export default function WalletPage() {
    * positive leg is the receiving ("to") side. The clicked row can be either
    * one, and it only knows its own amount — so the peer leg is loaded to get
    * the real other amount instead of mirroring this row's amount, which would
-   * rewrite a cross-currency transfer at a 1:1 rate.
+   * rewrite a cross-currency transfer at a 1:1 rate. That fetch is why the row's
+   * edit button shows a pending state and rejects re-entry while it is in flight.
    */
   async function handleEditTransfer(transaction: Transaction) {
+    if (loadingTransferId) return;
+
     const peerWallet = transaction.peer_wallet;
     if (!transaction.transfer_ref || !peerWallet) {
       toast.error("This transfer is missing its other side.");
       return;
     }
 
-    let peer: Transaction | null = null;
+    setLoadingTransferId(transaction.id);
     try {
-      peer = await fetchTransferPeer(peerWallet.id, transaction.transfer_ref, transaction.date);
-    } catch (error) {
-      console.error("Failed to load the other side of the transfer:", error);
+      let peer: Transaction | null = null;
+      try {
+        peer = await fetchTransferPeer(peerWallet.id, transaction.transfer_ref, transaction.date);
+      } catch (error) {
+        console.error("Failed to load the other side of the transfer:", error);
+      }
+
+      const isOutgoing = Number(transaction.amount) < 0;
+      let fromAmount: number;
+      let toAmount: number;
+
+      if (peer) {
+        const outgoingLeg = isOutgoing ? transaction : peer;
+        const incomingLeg = isOutgoing ? peer : transaction;
+        fromAmount = Math.abs(Number(outgoingLeg.amount));
+        toAmount = Math.abs(Number(incomingLeg.amount));
+      } else if (peerWallet.currency === wallet?.currency) {
+        // Same-currency transfers have equal legs, so the visible row is enough.
+        fromAmount = Math.abs(Number(transaction.amount));
+        toAmount = fromAmount;
+      } else {
+        toast.error("Could not load the other side of this transfer.");
+        return;
+      }
+
+      setEditingTransfer(transaction);
+      setEditTransferValues({
+        from_wallet_id: isOutgoing ? params.id : peerWallet.id,
+        to_wallet_id: isOutgoing ? peerWallet.id : params.id,
+        from_amount: fromAmount,
+        to_amount: toAmount,
+        date: transaction.date,
+        note: transaction.note,
+      });
+      setTransferDialogOpen(true);
+    } finally {
+      setLoadingTransferId(null);
     }
-
-    const isOutgoing = Number(transaction.amount) < 0;
-    let fromAmount: number;
-    let toAmount: number;
-
-    if (peer) {
-      const outgoingLeg = isOutgoing ? transaction : peer;
-      const incomingLeg = isOutgoing ? peer : transaction;
-      fromAmount = Math.abs(Number(outgoingLeg.amount));
-      toAmount = Math.abs(Number(incomingLeg.amount));
-    } else if (peerWallet.currency === wallet?.currency) {
-      // Same-currency transfers have equal legs, so the visible row is enough.
-      fromAmount = Math.abs(Number(transaction.amount));
-      toAmount = fromAmount;
-    } else {
-      toast.error("Could not load the other side of this transfer.");
-      return;
-    }
-
-    setEditingTransfer(transaction);
-    setEditTransferValues({
-      from_wallet_id: isOutgoing ? params.id : peerWallet.id,
-      to_wallet_id: isOutgoing ? peerWallet.id : params.id,
-      from_amount: fromAmount,
-      to_amount: toAmount,
-      date: transaction.date,
-      note: transaction.note,
-    });
-    setTransferDialogOpen(true);
   }
 
   function handleEditTransaction(transaction: Transaction) {
@@ -674,9 +684,14 @@ export default function WalletPage() {
                                   <Button
                                     variant="ghost"
                                     size="sm"
+                                    disabled={loadingTransferId !== null}
                                     onClick={() => handleEditTransfer(transaction)}
                                   >
-                                    <Edit className="h-4 w-4" />
+                                    {loadingTransferId === transaction.id ? (
+                                      <Loader2 className="h-4 w-4 animate-spin" />
+                                    ) : (
+                                      <Edit className="h-4 w-4" />
+                                    )}
                                   </Button>
                                 </TableCell>
                               </TableRow>
