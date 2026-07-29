@@ -96,9 +96,30 @@ export default function DateSelector({ onDateChange }: DateSelectorProps) {
     }
   };
 
+  /**
+   * Drops `date_from`/`date_to` from the URL so the page leaves range mode.
+   * Month/year are re-asserted explicitly (falling back to what the page is
+   * already showing) so the resulting URL is never empty.
+   */
+  const exitDateRangeMode = () => {
+    const p = new URLSearchParams(searchParams.toString());
+    p.delete("date_from");
+    p.delete("date_to");
+    p.set("month", month);
+    p.set("year", year);
+    router.replace(`?${p.toString()}`);
+    onDateChange?.({ month, year });
+  };
+
   const handleClearDateRange = () => {
     setDateFrom(undefined);
     setDateTo(undefined);
+    exitDateRangeMode();
+  };
+
+  const handleBackToMonth = () => {
+    setRangeMode(false);
+    exitDateRangeMode();
   };
 
   if (rangeMode) {
@@ -153,7 +174,7 @@ export default function DateSelector({ onDateChange }: DateSelectorProps) {
         <div className="flex gap-2 justify-end">
           <Button
             variant="outline"
-            onClick={() => setRangeMode(false)}
+            onClick={handleBackToMonth}
           >
             Back to Month
           </Button>

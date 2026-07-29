@@ -23,7 +23,17 @@ import { SavingsGoalsPanel } from "@/components/SavingsGoalsPanel";
 import { DeleteWalletDialog } from "@/components/DeleteWalletDialog";
 import { WalletDialog } from "@/components/WalletDialog";
 import { exportWalletCsv } from "@/api/exports";
+import { fetchTransferPeer } from "@/api/transfers";
 import { toast } from "sonner";
+
+type TransferEditValues = {
+  from_wallet_id: string;
+  to_wallet_id: string;
+  from_amount: number;
+  to_amount: number;
+  date: string;
+  note: string;
+};
 
 export default function WalletPage() {
   const [wallet, setWallet] = useState<Wallet | null>(null);
@@ -40,6 +50,7 @@ export default function WalletPage() {
   const [budgetPanelKey, setBudgetPanelKey] = useState(0);
   const [transferDialogOpen, setTransferDialogOpen] = useState(false);
   const [editingTransfer, setEditingTransfer] = useState<Transaction | null>(null);
+  const [editTransferValues, setEditTransferValues] = useState<TransferEditValues | null>(null);
   const [deleteWalletOpen, setDeleteWalletOpen] = useState(false);
   const [editWalletOpen, setEditWalletOpen] = useState(false);
 
@@ -88,13 +99,15 @@ export default function WalletPage() {
     }
   }
 
+  // Custom date-range mode uses the same unpaginated listing endpoint as month
+  // mode (not the cursor-paginated search endpoint), so the summary cards add up
+  // over the complete range rather than over the first page.
   async function fetchTransactionsByDateRange(from: string, to: string) {
     try {
-      const response = await axiosInstance.get<TransactionSearchResponse>(
-        buildSearchUrl("", { category: "", tag: "", date_from: from, date_to: to, min_amount: "", max_amount: "" })
+      const response = await axiosInstance.get<Transaction[]>(
+        `wallets/${params.id}/transactions/?date_from=${encodeURIComponent(from)}&date_to=${encodeURIComponent(to)}`
       );
-      setTransactions(response.data.results);
-      setSearchCursor(extractCursor(response.data.next));
+      setTransactions(response.data);
     } catch (error) {
       console.error("Failed to fetch transactions by date range:", error);
     }
@@ -244,11 +257,60 @@ export default function WalletPage() {
 
   function handleAddTransfer() {
     setEditingTransfer(null);
+    setEditTransferValues(null);
     setTransferDialogOpen(true);
   }
 
-  function handleEditTransfer(transaction: Transaction) {
+  /**
+   * Opens the transfer dialog for an existing transfer.
+   *
+   * A transfer is two rows: the negative leg is the sending ("from") side, the
+   * positive leg is the receiving ("to") side. The clicked row can be either
+   * one, and it only knows its own amount — so the peer leg is loaded to get
+   * the real other amount instead of mirroring this row's amount, which would
+   * rewrite a cross-currency transfer at a 1:1 rate.
+   */
+  async function handleEditTransfer(transaction: Transaction) {
+    const peerWallet = transaction.peer_wallet;
+    if (!transaction.transfer_ref || !peerWallet) {
+      toast.error("This transfer is missing its other side.");
+      return;
+    }
+
+    let peer: Transaction | null = null;
+    try {
+      peer = await fetchTransferPeer(peerWallet.id, transaction.transfer_ref, transaction.date);
+    } catch (error) {
+      console.error("Failed to load the other side of the transfer:", error);
+    }
+
+    const isOutgoing = Number(transaction.amount) < 0;
+    let fromAmount: number;
+    let toAmount: number;
+
+    if (peer) {
+      const outgoingLeg = isOutgoing ? transaction : peer;
+      const incomingLeg = isOutgoing ? peer : transaction;
+      fromAmount = Math.abs(Number(outgoingLeg.amount));
+      toAmount = Math.abs(Number(incomingLeg.amount));
+    } else if (peerWallet.currency === wallet?.currency) {
+      // Same-currency transfers have equal legs, so the visible row is enough.
+      fromAmount = Math.abs(Number(transaction.amount));
+      toAmount = fromAmount;
+    } else {
+      toast.error("Could not load the other side of this transfer.");
+      return;
+    }
+
     setEditingTransfer(transaction);
+    setEditTransferValues({
+      from_wallet_id: isOutgoing ? params.id : peerWallet.id,
+      to_wallet_id: isOutgoing ? peerWallet.id : params.id,
+      from_amount: fromAmount,
+      to_amount: toAmount,
+      date: transaction.date,
+      note: transaction.note,
+    });
     setTransferDialogOpen(true);
   }
 
@@ -767,13 +829,7 @@ export default function WalletPage() {
           wallets={wallets}
           currentWalletId={params.id}
           editTransferRef={editingTransfer?.transfer_ref ?? null}
-          editValues={editingTransfer ? {
-            to_wallet_id: editingTransfer.peer_wallet?.id ?? "",
-            from_amount: Math.abs(Number(editingTransfer.amount)),
-            to_amount: Math.abs(Number(editingTransfer.amount)),
-            date: editingTransfer.date,
-            note: editingTransfer.note,
-          } : null}
+          editValues={editTransferValues}
         />
       )}
       {wallet && (

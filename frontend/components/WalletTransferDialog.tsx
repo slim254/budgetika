@@ -30,9 +30,13 @@ interface WalletTransferDialogProps {
     onDeleted: () => void;
     wallets: Wallet[];
     currentWalletId: string;
-    // For edit mode: pass the transfer_ref and pre-filled values
+    // For edit mode: pass the transfer_ref and pre-filled values.
+    // `from_wallet_id`/`to_wallet_id` describe the transfer's real direction —
+    // the sending wallet is not necessarily the wallet being viewed, since the
+    // edit can be opened from the receiving side.
     editTransferRef?: string | null;
     editValues?: {
+        from_wallet_id: string;
         to_wallet_id: string;
         from_amount: number;
         to_amount: number;
@@ -54,6 +58,7 @@ export function WalletTransferDialog({
     const isEdit = !!editTransferRef;
     const today = formatDateForAPI(new Date());
 
+    const [fromWalletId, setFromWalletId] = useState(currentWalletId);
     const [toWalletId, setToWalletId] = useState("");
     const [fromAmount, setFromAmount] = useState("");
     const [toAmount, setToAmount] = useState("");
@@ -66,13 +71,19 @@ export function WalletTransferDialog({
     const [confirmDelete, setConfirmDelete] = useState(false);
     const [error, setError] = useState<string | null>(null);
     const rateTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
+    // Set while an edit is being populated, so the exchange-rate autofill does
+    // not immediately overwrite the transfer's stored received amount.
+    const skipNextRateFetchRef = useRef(false);
 
-    const currentWallet = wallets.find((w) => w.id === currentWalletId);
-    const otherWallets = wallets.filter((w) => w.id !== currentWalletId);
+    // In create mode the sending wallet is always the wallet being viewed; in
+    // edit mode it comes from the transfer itself (the negative leg).
+    const fromWallet = wallets.find((w) => w.id === fromWalletId);
+    const otherWallets = wallets.filter((w) => w.id !== fromWalletId);
     const toWallet = wallets.find((w) => w.id === toWalletId);
-    const isCrossCurrency = !!toWallet && toWallet.currency !== currentWallet?.currency;
+    const isCrossCurrency = !!toWallet && toWallet.currency !== fromWallet?.currency;
 
-    // Populate form when opening in edit mode
+    // Populate the form once per open. Deliberately not keyed on every derived
+    // value: re-running on each render would stomp on what the user is typing.
     useEffect(() => {
         if (!open) {
             setConfirmDelete(false);
@@ -80,35 +91,45 @@ export function WalletTransferDialog({
             return;
         }
         if (isEdit && editValues) {
+            skipNextRateFetchRef.current = true;
+            setFromWalletId(editValues.from_wallet_id);
             setToWalletId(editValues.to_wallet_id);
             setFromAmount(String(editValues.from_amount));
             setToAmount(String(editValues.to_amount));
             setDate(editValues.date.slice(0, 10));
             setNote(editValues.note);
         } else {
+            skipNextRateFetchRef.current = false;
+            setFromWalletId(currentWalletId);
+            const selectable = wallets.filter((w) => w.id !== currentWalletId);
             // Only reset toWalletId if not already selected
-            if (!toWalletId && otherWallets.length > 0) {
-                setToWalletId(otherWallets[0].id);
+            if (!toWalletId && selectable.length > 0) {
+                setToWalletId(selectable[0].id);
             }
             setFromAmount("");
             setToAmount("");
             setDate(today);
             setNote("");
         }
-    }, [open, isEdit, editValues, otherWallets, today]);
+        // eslint-disable-next-line react-hooks/exhaustive-deps
+    }, [open, editTransferRef]);
 
     // Auto-fill to_amount via exchange rate with 300ms debounce
     useEffect(() => {
-        if (!open || !isCrossCurrency || !fromAmount || !date || !toWallet || !currentWallet) return;
+        if (!open || !isCrossCurrency || !fromAmount || !date || !toWallet || !fromWallet) return;
         const amount = parseFloat(fromAmount);
         if (isNaN(amount) || amount <= 0) return;
+        if (skipNextRateFetchRef.current) {
+            skipNextRateFetchRef.current = false;
+            return;
+        }
 
         if (rateTimerRef.current) clearTimeout(rateTimerRef.current);
         rateTimerRef.current = setTimeout(async () => {
             setIsFetchingRate(true);
             setRateError(null);
             try {
-                const data = await getExchangeRate(currentWallet.currency as Currency, toWallet.currency as Currency, date);
+                const data = await getExchangeRate(fromWallet.currency as Currency, toWallet.currency as Currency, date);
                 const converted = (amount * parseFloat(data.rate)).toFixed(2);
                 setToAmount(converted);
             } catch {
@@ -121,7 +142,7 @@ export function WalletTransferDialog({
         return () => {
             if (rateTimerRef.current) clearTimeout(rateTimerRef.current);
         };
-    }, [fromAmount, date, toWalletId, open, isCrossCurrency, toWallet, currentWallet]);
+    }, [fromAmount, date, toWalletId, open, isCrossCurrency, toWallet, fromWallet]);
 
     async function handleSave() {
         if (!toWalletId || !fromAmount || !date) {
@@ -129,7 +150,10 @@ export function WalletTransferDialog({
             return;
         }
         const fa = parseFloat(fromAmount);
-        const ta = parseFloat(toAmount || fromAmount);
+        // The received-amount field is only shown for cross-currency transfers;
+        // otherwise both legs must stay in lockstep with the sent amount (a
+        // stale `toAmount` left over from an edit would desync the pair).
+        const ta = isCrossCurrency ? parseFloat(toAmount || fromAmount) : fa;
         if (fa <= 0 || ta <= 0) {
             setError("Amounts must be positive.");
             return;
@@ -155,7 +179,7 @@ export function WalletTransferDialog({
                 toast.success("Transfer updated");
             } else {
                 const payload: TransferFormData = {
-                    from_wallet: currentWalletId,
+                    from_wallet: fromWalletId,
                     to_wallet: toWalletId,
                     from_amount: fa,
                     to_amount: ta,
@@ -203,7 +227,7 @@ export function WalletTransferDialog({
                 <div className="grid gap-4 py-2">
                     <div className="grid gap-1">
                         <Label>From</Label>
-                        <Input value={currentWallet?.name ?? ""} disabled />
+                        <Input value={fromWallet?.name ?? ""} disabled />
                     </div>
 
                     <div className="grid gap-1">
@@ -223,7 +247,7 @@ export function WalletTransferDialog({
                     </div>
 
                     <div className="grid gap-1">
-                        <Label>Amount ({currentWallet?.currency.toUpperCase()})</Label>
+                        <Label>Amount ({fromWallet?.currency.toUpperCase()})</Label>
                         <Input
                             type="number"
                             min="0"
