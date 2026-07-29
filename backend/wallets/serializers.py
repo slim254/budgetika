@@ -63,13 +63,18 @@ class CategorySerializer(serializers.ModelSerializer):
         SerializerMethodField allows computed/derived fields in responses.
         The method name must follow the pattern: get_<field_name>
 
-        Performance consideration: This runs a COUNT query for each category.
-        For large datasets, consider:
-        - Prefetching: queryset.prefetch_related('transactions')
-        - Annotation: queryset.annotate(transaction_count=Count('transactions'))
+        Performance: this is annotation-only. Counting here unconditionally
+        meant one COUNT query per category *per transaction* whenever a
+        category was serialized as a nested field (TransactionSerializer,
+        BudgetRuleSerializer, ...) — a classic N+1.
+
+        The category list/detail endpoints annotate `transaction_count` on the
+        queryset (see wallets.views.UserCategoryList). Everywhere else the
+        annotation is absent and this returns None.
         """
-        return obj.transactions.count()
-    
+        return getattr(obj, 'transaction_count', None)
+
+
 class TagSerializer(serializers.ModelSerializer):
     """
     Serializer for user-scoped tags.
@@ -96,8 +101,14 @@ class TagSerializer(serializers.ModelSerializer):
         read_only_fields = ['id']
 
     def get_transaction_count(self, obj):
-        """Number of transactions using this tag."""
-        return obj.transactions.count()
+        """Number of transactions using this tag.
+
+        Annotation-only (see CategorySerializer.get_transaction_count): the tag
+        list/detail endpoints annotate `transaction_count`; when a tag is
+        serialized nested inside a transaction the annotation is absent and
+        this returns None rather than firing a COUNT per tag per row.
+        """
+        return getattr(obj, 'transaction_count', None)
 
 
 class TransactionSerializer(serializers.ModelSerializer):
@@ -170,6 +181,12 @@ class TransactionSerializer(serializers.ModelSerializer):
                 raise serializers.ValidationError("Category not found or doesn't belong to you.")
         return value
     
+    def validate_amount(self, value):
+        """A zero-amount transaction is meaningless (neither income nor expense)."""
+        if value == 0:
+            raise serializers.ValidationError("Amount must not be zero.")
+        return value
+
     def validate_tag_ids(self, value):
         """Ensure all tags belong to the user."""
         user = self.context['request'].user
@@ -286,6 +303,29 @@ class WalletSerializer(serializers.ModelSerializer):
         model = Wallet
         fields = '__all__'
         read_only_fields = ['user']
+
+    def validate(self, data):
+        """
+        Block changing a wallet's currency once it holds transactions.
+
+        Transaction amounts are stored in the wallet currency (enforced by
+        TransactionSerializer.validate), so flipping the wallet currency would
+        silently re-denominate all existing history.
+        """
+        if self.instance is not None:
+            currency = data.get('currency')
+            if (
+                currency
+                and currency != self.instance.currency
+                and self.instance.transactions.exists()
+            ):
+                raise serializers.ValidationError({
+                    "currency": (
+                        "Cannot change the currency of a wallet that already has "
+                        "transactions."
+                    )
+                })
+        return data
 
     def get_balance(self, obj):
         """
@@ -785,6 +825,34 @@ class WalletTransferSerializer(serializers.Serializer):
             debit.save(update_fields=['transfer_peer'])
             credit.save(update_fields=['transfer_peer'])
         return debit, credit
+
+
+class WalletTransferPatchSerializer(serializers.Serializer):
+    """Validates a PATCH against an existing transfer pair.
+
+    Every field is optional — omitted fields leave the corresponding leg
+    unchanged. Amounts are always given as positive magnitudes; the view
+    applies the sign (debit negative, credit positive).
+    """
+    note = serializers.CharField(max_length=100, allow_blank=True, required=False)
+    # Same input formats as TransactionSerializer.date: the frontend date
+    # picker sends "YYYY-MM-DD", not a full ISO-8601 datetime.
+    date = serializers.DateTimeField(
+        required=False,
+        input_formats=["iso-8601", "%Y-%m-%d"],
+    )
+    from_amount = serializers.DecimalField(max_digits=10, decimal_places=2, required=False)
+    to_amount = serializers.DecimalField(max_digits=10, decimal_places=2, required=False)
+
+    def validate_from_amount(self, value):
+        if value <= 0:
+            raise serializers.ValidationError("Must be positive.")
+        return value
+
+    def validate_to_amount(self, value):
+        if value <= 0:
+            raise serializers.ValidationError("Must be positive.")
+        return value
 
 
 class SavingsGoalSerializer(serializers.ModelSerializer):

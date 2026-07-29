@@ -1,12 +1,14 @@
 from datetime import datetime, date
-from decimal import Decimal
+from decimal import Decimal, InvalidOperation
 import csv
-from django.db.models import F, Sum, DecimalField, Q
+from django.db.models import F, Sum, Count, DecimalField, Q
 from django.db.models.functions import Coalesce
 from django.shortcuts import get_object_or_404
 from django.db import transaction as db_transaction
 from django.http import HttpResponse
+from django.utils import timezone
 from rest_framework import generics, viewsets, status
+from rest_framework.exceptions import ValidationError
 from rest_framework.pagination import CursorPagination
 from rest_framework.decorators import action
 from rest_framework.permissions import IsAuthenticated
@@ -18,14 +20,85 @@ from .serializers import (
     UserDashboardSerializer, WalletDashboardSerializer,
     RecurringTransactionSerializer, RecurringTransactionExecutionSerializer,
     BudgetRuleSerializer, BudgetOverrideSerializer, BudgetSummarySerializer,
-    UserProfileSerializer, WalletTransferSerializer, SavingsGoalSerializer,
-    ImportCategoryRuleSerializer,
+    UserProfileSerializer, WalletTransferSerializer, WalletTransferPatchSerializer,
+    SavingsGoalSerializer, ImportCategoryRuleSerializer,
 )
 from rest_framework.views import APIView
 from rest_framework.response import Response
 from .services import GenericCSVImportService, DashboardService, get_rate, SavingsGoalService, suggest_keyword
 from .ai import ai_service, categorize_signatures
 import json
+
+
+# --- Query-parameter helpers ---------------------------------------------
+# Query params arrive as arbitrary client-controlled strings. Parsing them
+# inline (int(x), Decimal(x), or handing the raw string to the ORM) turns a
+# typo in the URL into an unhandled exception -> HTTP 500. These helpers raise
+# DRF's ValidationError instead, which the exception handler renders as a 400
+# with a field-keyed message.
+
+
+def _param_int(params, name, minimum=None, maximum=None):
+    """Return query param `name` as an int, or None if absent/blank."""
+    raw = params.get(name)
+    if raw is None or raw == '':
+        return None
+    try:
+        value = int(raw)
+    except (TypeError, ValueError):
+        raise ValidationError({name: f"Must be an integer (got '{raw}')."})
+    if minimum is not None and value < minimum:
+        raise ValidationError({name: f"Must be >= {minimum} (got {value})."})
+    if maximum is not None and value > maximum:
+        raise ValidationError({name: f"Must be <= {maximum} (got {value})."})
+    return value
+
+
+def _param_date(params, name):
+    """Return query param `name` as a date parsed from YYYY-MM-DD, or None."""
+    raw = params.get(name)
+    if raw is None or raw == '':
+        return None
+    try:
+        return datetime.strptime(raw, "%Y-%m-%d").date()
+    except (TypeError, ValueError):
+        raise ValidationError({name: f"Must be a date in YYYY-MM-DD format (got '{raw}')."})
+
+
+def _param_decimal(params, name):
+    """Return query param `name` as a Decimal, or None if absent/blank."""
+    raw = params.get(name)
+    if raw is None or raw == '':
+        return None
+    try:
+        value = Decimal(raw)
+    except (TypeError, ValueError, InvalidOperation):
+        raise ValidationError({name: f"Must be a number (got '{raw}')."})
+    # Decimal() happily parses "nan"/"inf"; neither is a usable ORM bound.
+    if not value.is_finite():
+        raise ValidationError({name: f"Must be a finite number (got '{raw}')."})
+    return value
+
+
+def _csv_safe(value):
+    """Neutralize spreadsheet formula injection in a CSV text cell.
+
+    A cell whose first character is one of = + @ (or a - not followed by a
+    digit, so genuine negative numbers survive) is executed as a formula by
+    Excel / Sheets / LibreOffice on open. Prefixing with an apostrophe forces
+    the spreadsheet to treat the value as literal text.
+
+    Only for text columns — numeric columns must stay numeric.
+    """
+    text = "" if value is None else str(value)
+    if not text:
+        return text
+    first = text[0]
+    if first in ("=", "+", "@"):
+        return "'" + text
+    if first == "-" and not text[1:2].isdigit():
+        return "'" + text
+    return text
 
 
 class WalletDetail(generics.RetrieveUpdateDestroyAPIView):
@@ -62,12 +135,15 @@ class WalletDetail(generics.RetrieveUpdateDestroyAPIView):
         """
         Called after validation but before saving during PUT/PATCH requests.
 
-        We verify wallet ownership again here as an extra security measure.
-        This ensures the wallet can't be updated to modify another user's data.
+        We re-verify wallet ownership here as an extra security measure.
+
+        Note: no `wallet=` kwarg is passed to save() — Wallet has no `wallet`
+        field, and the object being updated is already the one resolved (and
+        ownership-checked) by get_object().
         """
         wallet_id = self.kwargs['wallet_id']
-        wallet = get_object_or_404(Wallet, id=wallet_id, user=self.request.user)
-        serializer.save(wallet=wallet)
+        get_object_or_404(Wallet, id=wallet_id, user=self.request.user)
+        serializer.save()
 
     def perform_destroy(self, instance):
         """
@@ -89,16 +165,27 @@ class WalletTransactionList(generics.ListCreateAPIView):
         GET /wallets/{wallet_id}/transactions/ - List transactions (with optional month/year filter)
         POST /wallets/{wallet_id}/transactions/ - Create new transaction
 
-    Query Parameters (for GET):
+    Query Parameters (for GET), two mutually exclusive modes:
         month: Month number (1-12), defaults to current month
-        year: Year number, defaults to current year
+        year:  Year number, defaults to current year
+      -- or --
+        date_from: Inclusive lower bound, YYYY-MM-DD
+        date_to:   Inclusive upper bound, YYYY-MM-DD
 
-    Example: GET /wallets/1/transactions/?month=11&year=2025
+    If either date_from or date_to is supplied, the explicit range wins and
+    month/year are ignored. Invalid values return 400, not 500.
+
+    Examples:
+        GET /wallets/1/transactions/?month=11&year=2025
+        GET /wallets/1/transactions/?date_from=2025-11-01&date_to=2026-01-31
 
     The endpoint automatically filters transactions to:
     1. Only show transactions from the specified wallet
     2. Only show transactions where the requesting user owns the wallet (security)
-    3. Only show transactions from the specified month/year
+    3. Only show transactions inside the requested period
+
+    The response is intentionally unpaginated: callers compute income/expense
+    totals client-side over the full result set.
     """
     serializer_class = TransactionSerializer
     permission_classes = [IsAuthenticated]
@@ -111,20 +198,42 @@ class WalletTransactionList(generics.ListCreateAPIView):
         Filters:
         1. wallet: Only transactions from the specified wallet
         2. user: Only transactions from wallets owned by the authenticated user
-        3. date__month and date__year: Only transactions from specified month/year
+        3. date range: either an explicit date_from/date_to window, or the
+           month/year pair (defaulting to the current month).
+
+        select_related/prefetch_related are needed because TransactionSerializer
+        nests `category` and `tags` on every row.
         """
         wallet_id = self.kwargs['wallet_id']
         wallet = get_object_or_404(Wallet, id=wallet_id, user=self.request.user)
-        queryset = Transaction.objects.filter(wallet=wallet).select_related('transfer_peer__wallet')
+        queryset = (
+            Transaction.objects.filter(wallet=wallet)
+            .select_related('category', 'transfer_peer__wallet')
+            .prefetch_related('tags')
+        )
 
-        # Get month and year from query parameters, default to current date
-        month = self.request.query_params.get('month')
-        year = self.request.query_params.get('year')
+        params = self.request.query_params
+        date_from = _param_date(params, 'date_from')
+        date_to = _param_date(params, 'date_to')
 
-        if not month:
-            month = datetime.now().month
-        if not year:
-            year = datetime.now().year
+        # Explicit range mode takes precedence over month/year.
+        if date_from or date_to:
+            if date_from and date_to and date_from > date_to:
+                raise ValidationError({'date_from': "Must be on or before date_to."})
+            if date_from:
+                queryset = queryset.filter(date__date__gte=date_from)
+            if date_to:
+                queryset = queryset.filter(date__date__lte=date_to)
+            return queryset
+
+        month = _param_int(params, 'month', minimum=1, maximum=12)
+        year = _param_int(params, 'year', minimum=1, maximum=9999)
+
+        now = timezone.now()
+        if month is None:
+            month = now.month
+        if year is None:
+            year = now.year
 
         # Filter by month and year using Django's date lookup expressions
         queryset = queryset.filter(date__month=month, date__year=year)
@@ -354,7 +463,7 @@ class UserCategoryList(generics.ListCreateAPIView):
         queryset = TransactionCategory.objects.filter(
             user=self.request.user,
             is_archived=False
-        )
+        ).annotate(transaction_count=Count('transactions'))
 
         if not include_hidden:
             queryset = queryset.filter(is_visible=True)
@@ -411,7 +520,9 @@ class UserTagList(generics.ListCreateAPIView):
         """Return tags for authenticated user only."""
         include_hidden = self.request.query_params.get('include_hidden', 'false').lower() == 'true'
 
-        queryset = UserTransactionTag.objects.filter(user=self.request.user)
+        queryset = UserTransactionTag.objects.filter(
+            user=self.request.user
+        ).annotate(transaction_count=Count('transactions'))
 
         if not include_hidden:
             queryset = queryset.filter(is_visible=True)
@@ -437,8 +548,10 @@ class UserTagDetail(generics.RetrieveUpdateDestroyAPIView):
     authentication_classes = [JWTAuthentication]
 
     def get_queryset(self):
-        """Return only user's tags."""
-        return UserTransactionTag.objects.filter(user=self.request.user)
+        """Return only user's tags, annotated with transaction_count."""
+        return UserTransactionTag.objects.filter(
+            user=self.request.user
+        ).annotate(transaction_count=Count('transactions'))
 
 
 class UserCategoryDetail(generics.RetrieveUpdateDestroyAPIView):
@@ -455,8 +568,10 @@ class UserCategoryDetail(generics.RetrieveUpdateDestroyAPIView):
     authentication_classes = [JWTAuthentication]
 
     def get_queryset(self):
-        """Return only user's own categories."""
-        return TransactionCategory.objects.filter(user=self.request.user)
+        """Return only user's own categories, annotated with transaction_count."""
+        return TransactionCategory.objects.filter(
+            user=self.request.user
+        ).annotate(transaction_count=Count('transactions'))
 
     def perform_destroy(self, instance):
         """
@@ -565,10 +680,19 @@ class CSVExecuteView(APIView):
             rules = None
 
         service = GenericCSVImportService(request.user, wallet, csv_file)
-        result = service.execute(
-            column_mapping, amount_config, filters,
-            ai_categories=ai_categories, rules=rules,
-        )
+        try:
+            result = service.execute(
+                column_mapping, amount_config, filters,
+                ai_categories=ai_categories, rules=rules,
+            )
+        except Exception as e:
+            # A malformed CSV (bad encoding, unparseable date, missing column,
+            # ...) is a client-data problem, not a server fault. Match the
+            # parse endpoint and report it as 400 rather than a 500.
+            return Response(
+                {"success": False, "error": str(e)},
+                status=status.HTTP_400_BAD_REQUEST,
+            )
 
         if result.get('success'):
             return Response(result)
@@ -673,7 +797,15 @@ class CSVCategorizeView(APIView):
 
 
 class CSVExportView(APIView):
-    """GET /api/wallets/{wallet_id}/export/?month=M&year=Y — download transactions as CSV."""
+    """GET /api/wallets/{wallet_id}/export/ — download transactions as CSV.
+
+    Optional filters (all independent, all combinable):
+        month=M          restrict to calendar month M (1-12)
+        year=Y           restrict to year Y
+        date_from=YYYY-MM-DD / date_to=YYYY-MM-DD   inclusive range bounds
+
+    Invalid values return 400 rather than a 500 from the ORM.
+    """
     permission_classes = [IsAuthenticated]
     authentication_classes = [JWTAuthentication]
 
@@ -685,10 +817,26 @@ class CSVExportView(APIView):
             .prefetch_related("tags")
             .order_by("-date")
         )
-        month = request.query_params.get("month")
-        year = request.query_params.get("year")
-        if month and year:
-            qs = qs.filter(date__month=month, date__year=year)
+
+        params = request.query_params
+        month = _param_int(params, "month", minimum=1, maximum=12)
+        year = _param_int(params, "year", minimum=1, maximum=9999)
+        date_from = _param_date(params, "date_from")
+        date_to = _param_date(params, "date_to")
+
+        if date_from and date_to and date_from > date_to:
+            raise ValidationError({"date_from": "Must be on or before date_to."})
+
+        # month and year apply independently — ?year=2026 alone exports the
+        # whole year, ?month=6 alone exports every June.
+        if month is not None:
+            qs = qs.filter(date__month=month)
+        if year is not None:
+            qs = qs.filter(date__year=year)
+        if date_from:
+            qs = qs.filter(date__date__gte=date_from)
+        if date_to:
+            qs = qs.filter(date__date__lte=date_to)
 
         response = HttpResponse(content_type="text/csv")
         safe_name = "".join(c for c in wallet.name if c.isalnum() or c in ("-", "_")) or "wallet"
@@ -699,11 +847,11 @@ class CSVExportView(APIView):
         for t in qs:
             writer.writerow([
                 t.date.isoformat(),
-                t.amount,
+                t.amount,                       # numeric — must NOT be escaped
                 t.currency,
-                t.note,
-                t.category.name if t.category else "",
-                ";".join(tag.name for tag in t.tags.all()),
+                _csv_safe(t.note),
+                _csv_safe(t.category.name if t.category else ""),
+                _csv_safe(";".join(tag.name for tag in t.tags.all())),
             ])
         return response
 
@@ -848,16 +996,27 @@ class WalletTransactionSearch(generics.ListAPIView):
         if tag := p.get('tag'):
             queryset = queryset.filter(tags__id=tag).distinct()
 
-        if date_from := p.get('date_from'):
+        # Parsed rather than handed to the ORM raw, so bad input is a 400.
+        date_from = _param_date(p, 'date_from')
+        date_to = _param_date(p, 'date_to')
+        min_amount = _param_decimal(p, 'min_amount')
+        max_amount = _param_decimal(p, 'max_amount')
+
+        if date_from and date_to and date_from > date_to:
+            raise ValidationError({'date_from': "Must be on or before date_to."})
+        if min_amount is not None and max_amount is not None and min_amount > max_amount:
+            raise ValidationError({'min_amount': "Must be less than or equal to max_amount."})
+
+        if date_from:
             queryset = queryset.filter(date__date__gte=date_from)
 
-        if date_to := p.get('date_to'):
+        if date_to:
             queryset = queryset.filter(date__date__lte=date_to)
 
-        if min_amount := p.get('min_amount'):
+        if min_amount is not None:
             queryset = queryset.filter(amount__gte=min_amount)
 
-        if max_amount := p.get('max_amount'):
+        if max_amount is not None:
             queryset = queryset.filter(amount__lte=max_amount)
 
         return queryset
@@ -1104,21 +1263,29 @@ class WalletTransferView(APIView):
         if debit is None:
             return Response(status=status.HTTP_404_NOT_FOUND)
 
-        note = request.data.get('note', debit.note)
-        date = request.data.get('date', debit.date)
-        from_amount = request.data.get('from_amount')
-        to_amount = request.data.get('to_amount')
+        # Validate before touching anything: previously the raw request values
+        # were assigned straight onto the model, so a bad date string or a
+        # negative/zero amount either blew up with a 500 or silently corrupted
+        # the pair's debit/credit signs.
+        patch = WalletTransferPatchSerializer(data=request.data)
+        patch.is_valid(raise_exception=True)
+        data = patch.validated_data
+
+        note = data.get('note', debit.note)
+        date = data.get('date', debit.date)
+        from_amount = data.get('from_amount')
+        to_amount = data.get('to_amount')
 
         with db_transaction.atomic():
             debit.note = note
             debit.date = date
             if from_amount is not None:
-                debit.amount = -Decimal(str(from_amount))
+                debit.amount = -from_amount
             debit.save()
             credit.note = note
             credit.date = date
             if to_amount is not None:
-                credit.amount = Decimal(str(to_amount))
+                credit.amount = to_amount
             credit.save()
 
         debit_data = TransactionSerializer(
