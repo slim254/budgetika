@@ -108,11 +108,17 @@ POST       /api/token/refresh/
 ## CSV Import
 
 Two-step flow (plus an optional AI step):
-1. **Parse** (`/import/parse/`) — upload CSV, get columns + sample rows + unique values
+1. **Parse** (`/import/parse/`) — upload CSV, get columns + sample rows + unique values + date-format detection (`date_format`, `date_format_ambiguous`, and per-column `date_formats: {col: {format, ambiguous}}`)
 2. **Categorize** (`/import/categorize/`, optional) — AI suggests a category per **unique** row description for rows that lack a matching mapped category. Returns `{suggestions: [{key, signature, count, category_id, category_name}], usage_warning, quota_exceeded}`.
-3. **Execute** (`/import/execute/`) — supply column mapping + amount config + optional filters. Optionally include `ai_categories` ({normalized_signature: category_id}) to apply the reviewed AI suggestions.
+3. **Execute** (`/import/execute/`) — supply column mapping + amount config + optional filters + optional `date_format`. Optionally include `ai_categories` ({normalized_signature: category_id}) to apply the reviewed AI suggestions.
 
-Business logic lives in `backend/wallets/services.py` (`GenericCSVImportService`). Duplicate detection: same wallet + date + amount + note.
+Business logic lives in `backend/wallets/services.py` (`GenericCSVImportService`).
+
+**Duplicate detection:** same wallet + date + amount + note, compared against a **snapshot taken before the import loop**. Rows created by the current import are not in the snapshot, so a file legitimately containing N identical rows imports all N; re-running the same file still skips everything. Rows with no mapped note are stored (and deduped) as `"Imported transaction"`.
+
+**Date formats:** execute accepts `date_format` = `auto` (default) | `DMY` | `MDY` | `YMD`. `auto` pre-scans the entire mapped date column: any value with a day-position >12 settles the order for the whole file, a 4-digit leading component means year-first, and a file that proves nothing (or contradicts itself) falls back to `DMY` (EU user). ISO/year-first values are always parsed first regardless of the setting; the other orders are tried as a last resort so a stray row still imports rather than erroring.
+
+**Category matching on import** is case-insensitive (`name__iexact`), so a CSV saying "groceries" reuses the existing "Groceries" instead of creating a near-duplicate.
 
 **AI auto-categorization:** constrained to the user's existing visible categories (never invents new ones). Each row's signature is built from all descriptive columns **except the mapped date and amount** (so identical merchants dedup regardless of date/amount). Batched via `wallets.ai.categorize_signatures()`; quota exhaustion mid-import is non-fatal (remaining rows left uncategorized). When `ai_categories` is passed, execute does **not** auto-create categories from the mapped column (unmatched mapped values fall through to the AI suggestion); the legacy path (no `ai_categories`) still auto-creates.
 

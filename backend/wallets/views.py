@@ -663,6 +663,11 @@ class CSVExecuteView(APIView):
             'file': request.data.get('file')
         }
 
+        # Plain (non-JSON) scalar field. Omit when blank so the serializer
+        # default ('auto') applies instead of failing the choice validation.
+        if request.data.get('date_format'):
+            data['date_format'] = request.data['date_format']
+
         ai_categories = None
         rules = None
         try:
@@ -691,6 +696,7 @@ class CSVExecuteView(APIView):
         column_mapping = serializer.validated_data['column_mapping']
         amount_config = serializer.validated_data['amount_config']
         filters = serializer.validated_data.get('filters', [])
+        date_format = serializer.validated_data.get('date_format', 'auto')
 
         # Only pass a dict through (None => legacy auto-create behavior).
         if not isinstance(ai_categories, dict):
@@ -703,6 +709,7 @@ class CSVExecuteView(APIView):
             result = service.execute(
                 column_mapping, amount_config, filters,
                 ai_categories=ai_categories, rules=rules,
+                date_format=date_format,
             )
         except Exception:
             # A malformed CSV (bad encoding, unparseable date, missing column,

@@ -16,7 +16,7 @@ from decimal import Decimal
 from django.utils import timezone
 import uuid
 from django.db import transaction as db_transaction
-from .services import get_rate, SavingsGoalService
+from .services import get_rate, SavingsGoalService, DATE_FORMAT_CHOICES
 from datetime import date
 
 
@@ -442,6 +442,7 @@ class CSVExecuteSerializer(serializers.Serializer):
     - column_mapping: Maps transaction fields to CSV columns
     - amount_config: How to interpret amounts
     - filters: Optional row filters
+    - date_format: How to read ambiguous numeric dates
     """
     file = serializers.FileField()
     column_mapping = serializers.DictField(
@@ -450,6 +451,13 @@ class CSVExecuteSerializer(serializers.Serializer):
     )
     amount_config = AmountConfigSerializer()
     filters = FilterRuleSerializer(many=True, required=False, default=list)
+    date_format = serializers.ChoiceField(
+        choices=DATE_FORMAT_CHOICES,
+        required=False,
+        default="auto",
+        help_text="Component order for ambiguous dates like 01/02/2024. "
+                  "'auto' infers it from the whole date column.",
+    )
 
     def validate_file(self, value):
         """Validate file is CSV and under 5MB."""

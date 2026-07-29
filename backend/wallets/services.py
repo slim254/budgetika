@@ -41,6 +41,42 @@ def suggest_keyword(signature: str) -> str:
     return tokens[0][:100] if tokens else ""
 
 
+# A date written as three numeric components, optionally followed by a time.
+# Used to guess whether a file is day-first (EU) or month-first (US).
+_DATE_TRIPLE_RE = re.compile(r"^\s*(\d{1,4})[-/.](\d{1,2})[-/.](\d{1,4})")
+
+# Component order for each supported date format.
+_DATE_ORDER_PARTS = {
+    "DMY": ("%d", "%m", "%Y"),
+    "MDY": ("%m", "%d", "%Y"),
+    "YMD": ("%Y", "%m", "%d"),
+}
+
+DATE_FORMAT_CHOICES = ("auto", "DMY", "MDY", "YMD")
+
+# EU user: when nothing in the file disambiguates 01/02/2024, assume 1 February.
+DEFAULT_DATE_ORDER = "DMY"
+
+
+def _candidate_date_formats(order):
+    """strptime patterns for a component order, across separators and time suffixes."""
+    a, b, c = _DATE_ORDER_PARTS[order]
+    formats = []
+    for sep in ("-", "/", "."):
+        base = sep.join((a, b, c))
+        for suffix in ("", " %H:%M:%S", " %H:%M", "T%H:%M:%S", "T%H:%M"):
+            formats.append(base + suffix)
+        # Two-digit year variant (15/01/24). %Y matches exactly four digits and
+        # %y exactly two, so these can never shadow each other.
+        short = base.replace("%Y", "%y")
+        for suffix in ("", " %H:%M:%S", " %H:%M"):
+            formats.append(short + suffix)
+    return formats
+
+
+_CANDIDATE_FORMATS = {o: _candidate_date_formats(o) for o in _DATE_ORDER_PARTS}
+
+
 def get_rate(base: str, quote: str, rate_date: _date) -> Decimal:
     if base == quote:
         return Decimal("1")
@@ -83,8 +119,15 @@ class GenericCSVImportService:
         self.rows = None
         self.columns = None
 
-        self.category_cache = {}  # {name: Category instance}
+        self.category_cache = {}  # {lowercased name: Category instance}
         self.tag_cache = {}  # {name: Tag instance}
+
+        # Snapshot of (date, amount, note) for transactions that already existed
+        # when the import started. Taken once, before the row loop.
+        self._existing_keys = None
+
+        # Component order used to read ambiguous numeric dates (see _parse_date).
+        self._date_order = DEFAULT_DATE_ORDER
 
         # AI review mode: {normalized_signature: category_id}. None => legacy behavior.
         self.ai_categories = None
@@ -111,15 +154,42 @@ class GenericCSVImportService:
 
         sample_rows = [row for _, row in self.rows[:5]]
 
+        # Date format detection, per column plus an overall guess. The user has
+        # not mapped a date column yet at this point, so every column that looks
+        # date-like is reported and the frontend can pre-select the right guess
+        # (and show a manual selector when it is ambiguous).
+        date_formats = {}
+        best_col, best_hits = None, 0
+        for col in self.columns:
+            order, ambiguous, hits = self._detect_date_order(
+                row.get(col, "") for _, row in self.rows
+            )
+            if order is None:
+                continue
+            date_formats[col] = {"format": order, "ambiguous": ambiguous}
+            if hits > best_hits:
+                best_col, best_hits = col, hits
+
+        overall = date_formats.get(best_col) or {
+            # No date-like column found: fall back to the EU default and flag it
+            # as ambiguous so the frontend still shows a usable selector.
+            "format": DEFAULT_DATE_ORDER,
+            "ambiguous": True,
+        }
+
         return {
             "success": True,
             "columns": self.columns,
             "sample_rows": sample_rows,
             "total_rows": len(self.rows),
             "unique_values": {k: sorted(list(v)) for k, v in unique_values.items()},
+            "date_format": overall["format"],
+            "date_format_ambiguous": overall["ambiguous"],
+            "date_formats": date_formats,
         }
 
-    def execute(self, column_mapping, amount_config, filters=None, ai_categories=None, rules=None):
+    def execute(self, column_mapping, amount_config, filters=None, ai_categories=None,
+                rules=None, date_format="auto"):
         """
         Import transactions using user's column mapping.
 
@@ -151,6 +221,10 @@ class GenericCSVImportService:
             filters: Optional row filters
                 [{'column': 'Wallet', 'operator': 'equals', 'value': 'Main'}]
 
+            date_format: 'auto' (default), 'DMY', 'MDY' or 'YMD'. Controls how
+                ambiguous numeric dates like 01/02/2024 are read. 'auto'
+                pre-scans the whole date column (see _resolve_date_order).
+
         Returns:
             dict: {
                 'success': bool,
@@ -180,6 +254,15 @@ class GenericCSVImportService:
                 "success": False,
                 "error": "'amount' and 'date' mappings are required",
             }
+
+        self._date_order = self._resolve_date_order(column_mapping, date_format)
+
+        # Snapshot what is already in the wallet BEFORE importing anything.
+        # Duplicate detection compares against this snapshot only, so a CSV that
+        # legitimately contains N identical rows (same day, same amount, same
+        # merchant — e.g. three coffees) imports all N instead of collapsing
+        # them into one.
+        self._snapshot_existing_keys()
 
         # Initialize stats
         stats = {
@@ -331,7 +414,7 @@ class GenericCSVImportService:
                 note_cols = [note_cols] if note_cols else []
             note = " - ".join(
                 v for v in (row.get(col, "").strip() for col in note_cols) if v
-            )
+            ) or "Imported transaction"
 
             tags_str = ""
             if column_mapping.get("tags"):
@@ -361,7 +444,7 @@ class GenericCSVImportService:
 
             with transaction.atomic():
                 txn = Transaction.objects.create(
-                    note=note or "Imported transaction",
+                    note=note,
                     amount=amount,
                     currency=self.wallet.currency,
                     date=date,
@@ -377,9 +460,80 @@ class GenericCSVImportService:
         except Exception as e:
             return f"error:{str(e)}"
 
-    def _parse_date(self, date_str):
+    @staticmethod
+    def _detect_date_order(values):
+        """Guess the component order of a column of date strings.
+
+        Returns (order, ambiguous, hits):
+            order:     'DMY' | 'MDY' | 'YMD', or None when nothing looked like a date
+            ambiguous: True when the values alone cannot prove the order
+            hits:      how many values parsed as a numeric date triple
+
+        A value whose day-position exceeds 12 (e.g. 15/01/2024) proves the
+        order. A four-digit leading component proves year-first. When neither
+        appears — or when the file contradicts itself — we report the EU
+        default and flag it ambiguous so the user can override.
+        """
+        ymd = dmy = mdy = unproven = 0
+        for value in values:
+            match = _DATE_TRIPLE_RE.match(value or "")
+            if not match:
+                continue
+            first, second, _ = match.groups()
+            if len(first) == 4:
+                ymd += 1
+                continue
+            a, b = int(first), int(second)
+            if a > 12 and b <= 12:
+                dmy += 1
+            elif b > 12 and a <= 12:
+                mdy += 1
+            else:
+                unproven += 1
+
+        hits = ymd + dmy + mdy + unproven
+        if hits == 0:
+            return None, False, 0
+        if dmy and not mdy:
+            return "DMY", False, hits
+        if mdy and not dmy:
+            return "MDY", False, hits
+        if not dmy and not mdy and ymd and not unproven:
+            return "YMD", False, hits
+        # Either the column contradicts itself, or nothing disambiguates it.
+        return DEFAULT_DATE_ORDER, True, hits
+
+    def _resolve_date_order(self, column_mapping, date_format):
+        """Pick the component order to parse this import's date column with.
+
+        An explicit DMY/MDY/YMD wins. 'auto' (or anything unrecognized)
+        pre-scans EVERY row of the mapped date column, so one 15/01/2024
+        anywhere in the file settles the format for all rows — rather than the
+        old behavior where each row was guessed in isolation and US order
+        happened to be tried first.
+        """
+        explicit = (date_format or "").strip().upper()
+        if explicit in _DATE_ORDER_PARTS:
+            return explicit
+
+        col = column_mapping.get("date")
+        if not col or not self.rows:
+            return DEFAULT_DATE_ORDER
+        order, _ambiguous, _hits = self._detect_date_order(
+            row.get(col, "") for _, row in self.rows
+        )
+        return order or DEFAULT_DATE_ORDER
+
+    def _parse_date(self, date_str, order=None):
         """
         Parse various date formats to timezone-aware datetime.
+
+        Order of attempts:
+        1. ISO 8601 (unambiguous, most precise)
+        2. Year-first patterns (a four-digit leading year cannot be a day)
+        3. The resolved order for this import (self._date_order)
+        4. The remaining orders, as a last resort, so an odd row in an
+           otherwise consistent file still imports instead of erroring.
 
         DRF LEARNING NOTE: Timezone Handling
         ====================================
@@ -393,6 +547,7 @@ class GenericCSVImportService:
 
         Args:
             date_str: Date string in various formats
+            order: 'DMY' | 'MDY' | 'YMD'; defaults to the import's resolved order
 
         Returns:
             datetime: Timezone-aware datetime
@@ -410,22 +565,18 @@ class GenericCSVImportService:
         except ValueError:
             pass
 
-        # Try common formats
-        formats = [
-            "%Y-%m-%d",  # 2024-01-15
-            "%d-%m-%Y",  # 15-01-2024
-            "%m/%d/%Y",  # 01/15/2024 (US)
-            "%d/%m/%Y",  # 15/01/2024 (EU)
-            "%Y-%m-%d %H:%M:%S",  # 2024-01-15 10:30:00
-            "%d-%m-%Y %H:%M:%S",  # 15-01-2024 10:30:00
-            "%d.%m.%Y",  # 15.01.2024 (German)
-        ]
-        for fmt in formats:
-            try:
-                dt = datetime.datetime.strptime(date_str, fmt)
+        order = (order or self._date_order or DEFAULT_DATE_ORDER).upper()
+        if order not in _DATE_ORDER_PARTS:
+            order = DEFAULT_DATE_ORDER
+
+        tried = ["YMD", order] + [o for o in _DATE_ORDER_PARTS if o not in ("YMD", order)]
+        for candidate in dict.fromkeys(tried):
+            for fmt in _CANDIDATE_FORMATS[candidate]:
+                try:
+                    dt = datetime.datetime.strptime(date_str, fmt)
+                except ValueError:
+                    continue
                 return timezone.make_aware(dt)
-            except ValueError:
-                continue
 
         raise ValueError(f"Unrecognized date format: {date_str}")
 
@@ -510,21 +661,32 @@ class GenericCSVImportService:
         else:
             raise ValueError(f"Unknown amount mode: {mode}")
 
+    def _snapshot_existing_keys(self):
+        """Record (date, amount, note) of everything already in the wallet.
+
+        Taken once before the import loop. Rows created during THIS import are
+        deliberately not added: a statement legitimately containing the same
+        purchase several times on the same day must import every occurrence.
+        Re-running the same file still skips them, because by then those rows
+        are part of the snapshot.
+        """
+        self._existing_keys = set(
+            Transaction.objects.filter(wallet=self.wallet).values_list(
+                "date", "amount", "note"
+            )
+        )
+
     def _is_duplicate(self, date, amount, note):
         """
-        Check if a transaction with same date, amount, and note already exists.
+        Check whether this row already existed in the wallet before the import.
 
-        This is a simple duplicate detection to avoid importing the same
-        transaction multiple times.
+        Compared against the pre-import snapshot only — see
+        _snapshot_existing_keys.
         """
-        from decimal import Decimal
+        if self._existing_keys is None:
+            self._snapshot_existing_keys()
 
-        return Transaction.objects.filter(
-            wallet=self.wallet,
-            date=date,
-            amount=Decimal(str(amount)),
-            note=note,
-        ).exists()
+        return (date, Decimal(str(amount)), note) in self._existing_keys
 
     def _existing_categories(self):
         """Cache the user's real categories.
@@ -655,23 +817,31 @@ class GenericCSVImportService:
 
     def _get_or_create_category(self, category_name):
         """
-        Get existing category by name or create a new one.
+        Get existing category by name (case-insensitively) or create a new one.
 
-        Categories are user-scoped (not wallet-scoped).
+        Categories are user-scoped (not wallet-scoped). Matching ignores case so
+        a CSV saying "groceries" reuses the existing "Groceries" instead of
+        creating a near-duplicate. Archived/hidden categories are matched too —
+        they still occupy the (name, user) unique constraint.
         """
-        if category_name in self.category_cache:
-            return self.category_cache[category_name]
+        key = category_name.lower()
+        if key in self.category_cache:
+            return self.category_cache[key]
 
-        category, created = TransactionCategory.objects.get_or_create(
-            user=self.user,
-            name=category_name,
-            defaults={"icon": "circle", "color": "#6B7280"},
-        )
+        category = TransactionCategory.objects.filter(
+            user=self.user, name__iexact=category_name
+        ).first()
 
-        self.category_cache[category_name] = category
-
-        if created:
+        if category is None:
+            category = TransactionCategory.objects.create(
+                user=self.user,
+                name=category_name,
+                icon="circle",
+                color="#6B7280",
+            )
             self.created_categories.add(category_name)
+
+        self.category_cache[key] = category
 
         return category
 
