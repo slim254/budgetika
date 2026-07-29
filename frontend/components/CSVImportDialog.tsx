@@ -713,37 +713,48 @@ export function CSVImportDialog({
                 </div>
               </div>
 
-              <div className="space-y-2">
-                <div className="flex items-center gap-2">
-                  <Label>Date Format</Label>
-                  {parseResult.date_format_ambiguous && (
-                    <Badge variant="outline" className="gap-1 text-amber-600 border-amber-300">
-                      <AlertCircle className="h-3 w-3" /> Ambiguous — please confirm
-                    </Badge>
-                  )}
-                </div>
-                <Select
-                  value={dateFormat}
-                  onValueChange={(v) => setDateFormat(v as DateFormatOption)}
-                >
-                  <SelectTrigger className="w-full sm:w-[260px]">
-                    <SelectValue />
-                  </SelectTrigger>
-                  <SelectContent>
-                    {DATE_FORMAT_OPTIONS.map((opt) => (
-                      <SelectItem key={opt.value} value={opt.value}>
-                        {opt.label}
-                      </SelectItem>
-                    ))}
-                  </SelectContent>
-                </Select>
-                <p className="text-xs text-muted-foreground">
-                  Detected format: {DATE_FORMAT_LABELS[parseResult.date_format] ?? parseResult.date_format}
-                  {parseResult.date_format_ambiguous
-                    ? " — dates in this file could be read more than one way, please verify."
-                    : ""}
-                </p>
-              </div>
+              {(() => {
+                // Prefer the per-column detection for the column the user actually
+                // mapped as the date column (execute re-scans that column in "auto"
+                // mode), falling back to the backend's overall best guess when the
+                // mapped column has no per-column entry (e.g. nothing mapped yet).
+                const mappedInfo = parseResult.date_formats[columnMapping.date];
+                const detectedFormat = mappedInfo?.format ?? parseResult.date_format;
+                const detectedAmbiguous = mappedInfo?.ambiguous ?? parseResult.date_format_ambiguous;
+                return (
+                  <div className="space-y-2">
+                    <div className="flex items-center gap-2">
+                      <Label>Date Format</Label>
+                      {detectedAmbiguous && (
+                        <Badge variant="outline" className="gap-1 text-amber-600 border-amber-300">
+                          <AlertCircle className="h-3 w-3" /> Ambiguous — please confirm
+                        </Badge>
+                      )}
+                    </div>
+                    <Select
+                      value={dateFormat}
+                      onValueChange={(v) => setDateFormat(v as DateFormatOption)}
+                    >
+                      <SelectTrigger className="w-full sm:w-[260px]">
+                        <SelectValue />
+                      </SelectTrigger>
+                      <SelectContent>
+                        {DATE_FORMAT_OPTIONS.map((opt) => (
+                          <SelectItem key={opt.value} value={opt.value}>
+                            {opt.label}
+                          </SelectItem>
+                        ))}
+                      </SelectContent>
+                    </Select>
+                    <p className="text-xs text-muted-foreground">
+                      Detected format: {DATE_FORMAT_LABELS[detectedFormat] ?? detectedFormat}
+                      {detectedAmbiguous
+                        ? " — dates in this file could be read more than one way, please verify."
+                        : ""}
+                    </p>
+                  </div>
+                );
+              })()}
 
               {/* Sample Data Preview */}
               <div className="mt-4">
