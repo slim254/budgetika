@@ -1,6 +1,7 @@
 from datetime import datetime, date
 from decimal import Decimal, InvalidOperation
 import csv
+import uuid
 from django.db.models import F, Sum, Count, DecimalField, Q
 from django.db.models.functions import Coalesce
 from django.shortcuts import get_object_or_404
@@ -78,6 +79,21 @@ def _param_decimal(params, name):
     if not value.is_finite():
         raise ValidationError({name: f"Must be a finite number (got '{raw}')."})
     return value
+
+
+def _param_uuid(params, name):
+    """Return query param `name` as a UUID, or None if absent/blank.
+
+    Handing a non-UUID string to `filter(category__id=...)` raises Django's own
+    ValidationError, which DRF does not map — so it escapes as a 500.
+    """
+    raw = params.get(name)
+    if raw is None or raw == '':
+        return None
+    try:
+        return uuid.UUID(str(raw))
+    except (TypeError, ValueError, AttributeError):
+        raise ValidationError({name: f"Must be a valid UUID (got '{raw}')."})
 
 
 def _csv_safe(value):
@@ -990,10 +1006,10 @@ class WalletTransactionSearch(generics.ListAPIView):
         if search := p.get('search'):
             queryset = queryset.filter(note__icontains=search)
 
-        if category := p.get('category'):
+        if category := _param_uuid(p, 'category'):
             queryset = queryset.filter(category__id=category)
 
-        if tag := p.get('tag'):
+        if tag := _param_uuid(p, 'tag'):
             queryset = queryset.filter(tags__id=tag).distinct()
 
         # Parsed rather than handed to the ORM raw, so bad input is a 400.
