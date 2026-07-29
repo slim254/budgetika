@@ -116,24 +116,24 @@ export function AuthProvider(props: AuthProviderProps) {
      *   username: User's username
      *   password: User's password
      *
-     * Errors: Caught but only logged to console. Should be handled in UI.
+     * Errors: Throws on a non-OK response (with the backend's `detail` message,
+     * when present) or on a network failure, so the caller (login page) can
+     * catch it and show an error message.
      */
     async function login(username: string, password: string) {
-        try {
-            const tokenResponse = await fetch(`${API_URL}token/`, {
-                method: "POST",
-                headers: {
-                    "Content-Type": "application/json",
-                },
-                body: JSON.stringify({ username, password }),
-            });
-            const token = await tokenResponse.json();
-            setSession(sessionFactory(token));
-            localStorage.setItem("token", JSON.stringify(token));
-        } catch (error) {
-            console.error(error);
-            // TODO: Throw error or set error state so UI can show error message
+        const tokenResponse = await fetch(`${API_URL}token/`, {
+            method: "POST",
+            headers: {
+                "Content-Type": "application/json",
+            },
+            body: JSON.stringify({ username, password }),
+        });
+        const token = await tokenResponse.json();
+        if (!tokenResponse.ok) {
+            throw new Error(token?.detail || "Login failed");
         }
+        setSession(sessionFactory(token));
+        localStorage.setItem("token", JSON.stringify(token));
     }
 
     /**
@@ -167,8 +167,14 @@ export function AuthProvider(props: AuthProviderProps) {
                 body: JSON.stringify({ refresh: token.refresh }),
             });
             const newToken = await response.json();
-            setSession(sessionFactory(newToken));
-            localStorage.setItem("token", JSON.stringify(newToken));
+            // Merge with what's stored so the refresh token is preserved if the
+            // response omits it, or updated if the backend rotates it (never
+            // store `refresh: undefined`).
+            const storedStr = localStorage.getItem("token");
+            const stored = storedStr ? JSON.parse(storedStr) : token;
+            const merged = { ...stored, ...newToken };
+            setSession(sessionFactory(merged));
+            localStorage.setItem("token", JSON.stringify(merged));
         } catch (error) {
             console.error(error);
             // TODO: Call logout() on refresh failure
