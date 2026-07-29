@@ -45,6 +45,9 @@ def create_default_categories_for_user(sender, instance, created, **kwargs):
         created: Boolean - True if this is a new user, False if update
         **kwargs: Additional signal arguments (raw, using, update_fields)
     """
+    if kwargs.get("raw"):
+        return
+
     if not created:
         return
 
@@ -75,6 +78,9 @@ def create_user_profile(sender, instance, created, **kwargs):
         created: Boolean - True if this is a new user, False if update
         **kwargs: Additional signal arguments (raw, using, update_fields)
     """
+    if kwargs.get("raw"):
+        return
+
     if not created:
         return
 

@@ -36,7 +36,7 @@ class WalletDetail(generics.RetrieveUpdateDestroyAPIView):
         GET /wallets/{wallet_id}/ - Retrieve wallet details
         PUT /wallets/{wallet_id}/ - Replace entire wallet
         PATCH /wallets/{wallet_id}/ - Partially update wallet
-        DELETE /wallets/{wallet_id}/ - Delete wallet (and all associated transactions)
+        DELETE /wallets/{wallet_id}/ - Archive wallet (soft delete; transactions preserved)
 
     Security: Uses IsAuthenticated permission to ensure only logged-in users can access.
     Also verifies that the requested wallet belongs to the authenticated user using
@@ -71,12 +71,14 @@ class WalletDetail(generics.RetrieveUpdateDestroyAPIView):
 
     def perform_destroy(self, instance):
         """
-        Called when DELETE request is processed. Deletes the wallet and all
-        associated transactions (due to ForeignKey on_delete=CASCADE).
+        Called when DELETE request is processed. Soft-deletes the wallet by
+        setting is_archived=True, preserving the wallet and its transactions
+        for historical/reporting purposes instead of hard-cascading deletes.
         """
         wallet_id = self.kwargs['wallet_id']
         wallet = get_object_or_404(Wallet, id=wallet_id, user=self.request.user)
-        instance.delete()
+        wallet.is_archived = True
+        wallet.save()
 
 
 class WalletTransactionList(generics.ListCreateAPIView):
@@ -209,7 +211,7 @@ class WalletList(generics.ListCreateAPIView):
         `calculated_balance` so WalletSerializer.get_balance can read it
         without issuing one aggregate query per wallet.
         """
-        return Wallet.objects.filter(user=self.request.user).annotate(
+        return Wallet.objects.filter(user=self.request.user, is_archived=False).annotate(
             calculated_balance=F('initial_value') + Coalesce(
                 Sum('transactions__amount'),
                 Decimal('0'),

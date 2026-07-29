@@ -33,6 +33,9 @@ class Wallet(models.Model):
         max_length=3,
         choices=CURRENCY_CHOICES,
     )
+    is_archived = models.BooleanField(default=False)
+    created_at = models.DateTimeField(auto_now_add=True)
+    updated_at = models.DateTimeField(auto_now=True)
 
     def __str__(self):
         return f"{self.user.username}'s Wallet"
@@ -240,6 +243,8 @@ class Transaction(models.Model):
         on_delete=models.SET_NULL,
         related_name='transfer_peer_reverse',
     )
+    created_at = models.DateTimeField(auto_now_add=True)
+    updated_at = models.DateTimeField(auto_now=True)
 
     def __str__(self):
         return self.note
