@@ -21,7 +21,10 @@ export interface Category {
     color: string;          // Hex color, e.g., '#F97316'
     is_visible: boolean;    // Visibility toggle
     is_archived: boolean;
-    transaction_count: number;
+    // Only computed on the category list/detail endpoints, which annotate it.
+    // null when the category comes back nested (inside a transaction, budget
+    // rule, import rule) or straight out of a POST response.
+    transaction_count: number | null;
 }
 
 export interface Tag {
@@ -30,7 +33,9 @@ export interface Tag {
     icon: string;           // Lucide icon name
     color: string;          // Hex color
     is_visible: boolean;    // Visibility toggle
-    transaction_count: number;
+    // See Category.transaction_count — annotation-only, null when nested or
+    // returned from a POST.
+    transaction_count: number | null;
 }
 
 export interface Transaction {

@@ -1,6 +1,7 @@
 from datetime import datetime, date
 from decimal import Decimal, InvalidOperation
 import csv
+import logging
 import uuid
 from django.db.models import F, Sum, Count, DecimalField, Q
 from django.db.models.functions import Coalesce
@@ -29,6 +30,8 @@ from rest_framework.response import Response
 from .services import GenericCSVImportService, DashboardService, get_rate, SavingsGoalService, suggest_keyword
 from .ai import ai_service, categorize_signatures
 import json
+
+logger = logging.getLogger(__name__)
 
 
 # --- Query-parameter helpers ---------------------------------------------
@@ -701,12 +704,20 @@ class CSVExecuteView(APIView):
                 column_mapping, amount_config, filters,
                 ai_categories=ai_categories, rules=rules,
             )
-        except Exception as e:
+        except Exception:
             # A malformed CSV (bad encoding, unparseable date, missing column,
             # ...) is a client-data problem, not a server fault. Match the
             # parse endpoint and report it as 400 rather than a 500.
+            #
+            # The traceback goes to the log, not to the client: str(e) on an
+            # arbitrary exception can leak file paths, SQL, or model internals.
+            logger.exception("CSV import execute failed")
             return Response(
-                {"success": False, "error": str(e)},
+                {
+                    "success": False,
+                    "error": "Could not import this CSV file. Check the file and "
+                             "your column mapping, then try again.",
+                },
                 status=status.HTTP_400_BAD_REQUEST,
             )
 
