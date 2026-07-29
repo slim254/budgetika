@@ -70,7 +70,7 @@ export function MetricsSummaryCards({
           <TrendingUp className="h-4 w-4 text-green-600" />
         </CardHeader>
         <CardContent>
-          <div className="text-2xl font-bold text-green-600">{formatCurrency(income)}</div>
+          <div className="text-2xl font-bold text-green-600">{formatCurrency(income, baseCurrency)}</div>
         </CardContent>
       </Card>
 
@@ -80,7 +80,7 @@ export function MetricsSummaryCards({
           <TrendingDown className="h-4 w-4 text-red-600" />
         </CardHeader>
         <CardContent>
-          <div className="text-2xl font-bold text-red-600">{formatCurrency(expenses)}</div>
+          <div className="text-2xl font-bold text-red-600">{formatCurrency(expenses, baseCurrency)}</div>
         </CardContent>
       </Card>
 
@@ -94,7 +94,7 @@ export function MetricsSummaryCards({
             className={`text-2xl font-bold ${net >= 0 ? "text-green-600" : "text-red-600"}`}
           >
             {net >= 0 ? "+" : ""}
-            {formatCurrency(net)}
+            {formatCurrency(net, baseCurrency)}
           </div>
           <p className="text-xs text-muted-foreground">Income − Expenses</p>
         </CardContent>

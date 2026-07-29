@@ -128,7 +128,6 @@ export default function SettingsPage() {
       toast.success("Deleted");
     } catch (error) {
       console.error("Failed to delete category:", error);
-      alert("Failed to delete category. Please try again.");
       toast.error("Something went wrong");
     }
   }
@@ -150,7 +149,11 @@ export default function SettingsPage() {
       };
 
       if (editingCategory) {
-        await axiosInstance.put(`wallets/categories/${editingCategory.id}/`, data);
+        const changed: Partial<typeof data> = {};
+        if (data.name !== editingCategory.name) changed.name = data.name;
+        if (data.icon !== (editingCategory.icon || "")) changed.icon = data.icon;
+        if (data.color !== (editingCategory.color || "#6B7280")) changed.color = data.color;
+        await axiosInstance.patch(`wallets/categories/${editingCategory.id}/`, changed);
       } else {
         await axiosInstance.post("wallets/categories/", data);
       }
@@ -209,7 +212,6 @@ export default function SettingsPage() {
       toast.success("Deleted");
     } catch (error) {
       console.error("Failed to delete tag:", error);
-      alert("Failed to delete tag. Please try again.");
       toast.error("Something went wrong");
     }
   }
@@ -231,7 +233,11 @@ export default function SettingsPage() {
       };
 
       if (editingTag) {
-        await axiosInstance.put(`wallets/tags/${editingTag.id}/`, data);
+        const changed: Partial<typeof data> = {};
+        if (data.name !== editingTag.name) changed.name = data.name;
+        if (data.icon !== (editingTag.icon || "")) changed.icon = data.icon;
+        if (data.color !== (editingTag.color || "#3B82F6")) changed.color = data.color;
+        await axiosInstance.patch(`wallets/tags/${editingTag.id}/`, changed);
       } else {
         await axiosInstance.post("wallets/tags/", data);
       }

@@ -31,6 +31,9 @@ export function SavingsGoalsPanel({
   const deleteGoal = useDeleteGoal(walletId);
 
   const handleDelete = async (goalId: string) => {
+    if (!confirm("Are you sure you want to delete this goal?")) {
+      return;
+    }
     try {
       await deleteGoal.mutateAsync(goalId);
       toast.success("Goal deleted");
@@ -85,7 +88,9 @@ export function SavingsGoalsPanel({
               </div>
               <Progress
                 value={
-                  Math.max(0, Math.min(100, (Number(summary.actual_savings) / Number(summary.total_monthly_needed)) * 100))
+                  Number(summary.total_monthly_needed)
+                    ? Math.max(0, Math.min(100, (Number(summary.actual_savings) / Number(summary.total_monthly_needed)) * 100))
+                    : 0
                 }
               />
               {summary.status === "short" && (

@@ -252,7 +252,6 @@ export default function WalletPage() {
       }
     } catch (error) {
       console.error("Failed to delete transaction:", error);
-      alert("Failed to delete transaction. Please try again.");
       toast.error("Failed to delete transaction");
     }
   }
