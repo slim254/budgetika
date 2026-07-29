@@ -88,7 +88,7 @@ export interface CSVParseResponse {
 export interface CSVColumnMapping {
     amount: string;
     date: string;
-    note?: string;
+    note?: string[];
     category?: string;
     tags?: string;
     type?: string;

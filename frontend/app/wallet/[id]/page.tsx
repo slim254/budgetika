@@ -125,14 +125,14 @@ export default function WalletPage() {
     }
   }
 
-  async function loadData() {
-    setIsLoading(true);
+  async function loadData(silent = false) {
+    if (!silent) setIsLoading(true);
     if (isDateRangeMode) {
       await Promise.all([fetchWallet(), fetchTransactionsByDateRange(dateFrom, dateTo), fetchWallets()]);
     } else {
       await Promise.all([fetchWallet(), fetchTransactions(), fetchWallets()]);
     }
-    setIsLoading(false);
+    if (!silent) setIsLoading(false);
   }
 
   function buildSearchUrl(query: string, filters: SearchFilters, cursor?: string | null): string {
@@ -271,7 +271,7 @@ export default function WalletPage() {
       const { query, filters } = searchParamsRef.current;
       await fetchSearchResults(query, filters);
     } else {
-      await loadData();
+      await loadData(keepDialogOpen);
     }
   }
 
@@ -281,7 +281,7 @@ export default function WalletPage() {
 
   async function handleImportComplete() {
     toast.success("Import complete");
-    await loadData();
+    await loadData(true);
     fetchCategories();
     fetchTags();
   }

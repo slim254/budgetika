@@ -405,8 +405,8 @@ class CSVExecuteSerializer(serializers.Serializer):
     """
     file = serializers.FileField()
     column_mapping = serializers.DictField(
-        child=serializers.CharField(allow_blank=True),
-        help_text="Maps transaction fields (amount, date, note, etc.) to CSV column names"
+        help_text="Maps transaction fields (amount, date, note, etc.) to CSV column names. "
+                   "'note' may be a list of column names, merged in order."
     )
     amount_config = AmountConfigSerializer()
     filters = FilterRuleSerializer(many=True, required=False, default=list)

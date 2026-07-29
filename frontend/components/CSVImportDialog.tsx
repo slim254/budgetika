@@ -114,7 +114,7 @@ export function CSVImportDialog({
   const [columnMapping, setColumnMapping] = useState<CSVColumnMapping>({
     amount: "",
     date: "",
-    note: "__none__",
+    note: [],
     category: "__none__",
     tags: "__none__",
     type: "__none__",
@@ -160,7 +160,7 @@ export function CSVImportDialog({
     setStep("upload");
     setFile(null);
     setParseResult(null);
-    setColumnMapping({ amount: "", date: "", note: "__none__", category: "__none__", tags: "__none__", type: "__none__" });
+    setColumnMapping({ amount: "", date: "", note: [], category: "__none__", tags: "__none__", type: "__none__" });
     setAmountConfig({ mode: "signed", income_value: "", expense_value: "" });
     setFilters([]);
     setExecuteResult(null);
@@ -253,10 +253,10 @@ export function CSVImportDialog({
 
     // Note detection
     const noteKeywords = ["note", "description", "desc", "title", "memo", "opis", "tytul"];
-    mapping.note = "__none__";
+    mapping.note = [];
     for (const col of columns) {
       if (noteKeywords.some((k) => col.toLowerCase().includes(k))) {
-        mapping.note = col;
+        mapping.note = [col];
         break;
       }
     }
@@ -322,7 +322,7 @@ export function CSVImportDialog({
     if (!file) return null;
 
     // Convert "__none__" back to empty string for the backend.
-    const cleanedMapping: Record<string, string> = { ...columnMapping };
+    const cleanedMapping: Record<string, string | string[]> = { ...columnMapping };
     Object.keys(cleanedMapping).forEach((key) => {
       if (cleanedMapping[key] === "__none__") {
         cleanedMapping[key] = "";
@@ -365,14 +365,6 @@ export function CSVImportDialog({
     } finally {
       setAiLoading(false);
       setAiFetched(true);
-    }
-  }
-
-  // When entering the AI step with the toggle on, fetch suggestions once.
-  function enterCategorizeStep() {
-    goToStep("categorize");
-    if (aiEnabled && !aiFetched) {
-      fetchSuggestions();
     }
   }
 
@@ -571,23 +563,56 @@ export function CSVImportDialog({
                 </div>
 
                 <div className="space-y-2">
-                  <Label>Note Column (Optional)</Label>
-                  <Select
-                    value={columnMapping.note || "__none__"}
-                    onValueChange={(v) => setColumnMapping({ ...columnMapping, note: v })}
-                  >
-                    <SelectTrigger>
-                      <SelectValue placeholder="Select column..." />
-                    </SelectTrigger>
-                    <SelectContent>
-                      <SelectItem value="__none__">None</SelectItem>
-                      {parseResult.columns.map((col) => (
-                        <SelectItem key={col} value={col}>
+                  <Label>Note Column(s) (Optional)</Label>
+                  <p className="text-xs text-muted-foreground">
+                    Pick one or more columns to merge into the note, in the order you add them.
+                  </p>
+                  {(columnMapping.note ?? []).length > 0 && (
+                    <div className="flex flex-wrap gap-1.5">
+                      {(columnMapping.note ?? []).map((col) => (
+                        <Badge key={col} variant="secondary" className="gap-1 pr-1">
                           {col}
-                        </SelectItem>
+                          <button
+                            type="button"
+                            onClick={() =>
+                              setColumnMapping({
+                                ...columnMapping,
+                                note: (columnMapping.note ?? []).filter((c) => c !== col),
+                              })
+                            }
+                            className="rounded-full hover:bg-muted-foreground/20"
+                          >
+                            <X className="h-3 w-3" />
+                          </button>
+                        </Badge>
                       ))}
-                    </SelectContent>
-                  </Select>
+                    </div>
+                  )}
+                  {parseResult.columns.filter((col) => !(columnMapping.note ?? []).includes(col))
+                    .length > 0 && (
+                    <Select
+                      key={(columnMapping.note ?? []).length}
+                      onValueChange={(v) =>
+                        setColumnMapping({
+                          ...columnMapping,
+                          note: [...(columnMapping.note ?? []), v],
+                        })
+                      }
+                    >
+                      <SelectTrigger>
+                        <SelectValue placeholder="Add a column..." />
+                      </SelectTrigger>
+                      <SelectContent>
+                        {parseResult.columns
+                          .filter((col) => !(columnMapping.note ?? []).includes(col))
+                          .map((col) => (
+                            <SelectItem key={col} value={col}>
+                              {col}
+                            </SelectItem>
+                          ))}
+                      </SelectContent>
+                    </Select>
+                  )}
                 </div>
 
                 <div className="space-y-2">
@@ -859,12 +884,18 @@ export function CSVImportDialog({
                 </div>
                 <Switch
                   checked={aiEnabled}
-                  onCheckedChange={(checked) => {
-                    setAiEnabled(checked);
-                    if (checked && !aiFetched && !aiLoading) fetchSuggestions();
-                  }}
+                  onCheckedChange={(checked) => setAiEnabled(checked)}
                 />
               </div>
+
+              {aiEnabled && !aiFetched && !aiLoading && (
+                <div className="flex flex-col items-center gap-3 py-12 text-center text-muted-foreground">
+                  <p>Suggest categories for uncategorized transactions using AI.</p>
+                  <Button onClick={fetchSuggestions} disabled={isLoading}>
+                    <Sparkles className="h-4 w-4 mr-2" /> Suggest Categories
+                  </Button>
+                </div>
+              )}
 
               {aiEnabled && aiLoading && (
                 <div className="flex items-center justify-center gap-2 py-12 text-muted-foreground">
@@ -1019,10 +1050,10 @@ export function CSVImportDialog({
                             <dt className="text-muted-foreground">Date:</dt>
                             <dd>{columnMapping.date}</dd>
                           </div>
-                          {columnMapping.note && columnMapping.note !== "__none__" && (
+                          {columnMapping.note && columnMapping.note.length > 0 && (
                             <div className="flex justify-between">
                               <dt className="text-muted-foreground">Note:</dt>
-                              <dd>{columnMapping.note}</dd>
+                              <dd>{columnMapping.note.join(" - ")}</dd>
                             </div>
                           )}
                           {columnMapping.category && columnMapping.category !== "__none__" && (
@@ -1205,14 +1236,14 @@ export function CSVImportDialog({
             )}
 
             {step === "filters" && (
-              <Button onClick={enterCategorizeStep} disabled={isLoading}>
+              <Button onClick={() => goToStep("categorize")} disabled={isLoading}>
                 Continue
                 <ArrowRight className="h-4 w-4 ml-2" />
               </Button>
             )}
 
             {step === "categorize" && (
-              <Button onClick={() => goToStep("review")} disabled={isLoading || aiLoading}>
+              <Button onClick={() => goToStep("review")} disabled={isLoading}>
                 Continue
                 <ArrowRight className="h-4 w-4 ml-2" />
               </Button>

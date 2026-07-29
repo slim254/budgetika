@@ -1,84 +1,81 @@
-# Budgeting App - Full Stack Django + Next.js
+# Budgeting App
 
-A personal finance tracker built with Django REST Framework and Next.js. Track income and expenses, organize transactions by category, and view monthly summaries.
+Django REST Framework backend + Next.js frontend. See [CLAUDE.md](CLAUDE.md) for architecture, [RUNBOOK.md](RUNBOOK.md) for LAN self-host deploy. This file = command cheat sheet.
 
-**Status**: Learning project with comprehensive documentation ✅
-
----
-
-## 📚 Documentation Guide
-
-This project includes extensive documentation tailored to your learning needs:
-
-### For Getting Started (Right Now)
-👉 **[QUICK_START.md](QUICK_START.md)** - 5-minute setup
-- Copy-paste commands for immediate setup
-- One-time vs recurring commands
-- Common errors quick fixes
-- Checklist to verify installation
-
-### For Detailed Setup Instructions
-👉 **[PROJECT_SETUP.md](PROJECT_SETUP.md)** - Complete setup guide
-- Step-by-step backend (Django) setup with venv
-- Step-by-step frontend (Next.js) setup
-- Running both servers simultaneously
-- Database management
-- Troubleshooting for 10 common issues
-- Testing the API with curl/Postman
-- Development workflow
-- Production deployment notes
-
-### For Django Quick Reference
-👉 **[DJANGO_REFRESHER.md](DJANGO_REFRESHER.md)** - Cheat sheet (500+ lines)
-
-Quick lookup for Django concepts used in this project
-
-### For Official Documentation & Learning Resources
-👉 **[RESOURCES.md](RESOURCES.md)** - Complete reference guide
-- Curated links to official documentation (Django, DRF, React, Next.js, etc.)
-- Quick links by use case ("I need to fix a bug", "I want to understand X")
-- Recommended reading order
-- Learning platforms and communities
-- API testing tools
-- Deployment platforms
-
----
-
-## 🚀 Quick Start
-
-### Prerequisites
-- Python 3.10+
-- Node.js 18+
-
-### Setup (5 minutes)
+## First-time setup
 
 ```bash
-# Terminal 1: Backend
-cd budgeting-app/backend
-python3 -m venv venv
-source venv/bin/activate  # macOS/Linux
+# Backend
+cd backend
+python3.13 -m venv venv
+source venv/bin/activate
 pip install -r requirements.txt
+cp .env.example .env               # edit: SECRET_KEY, ALLOWED_HOSTS, CORS_ALLOWED_ORIGINS
 python manage.py migrate
-python manage.py runserver 8100
+python manage.py createsuperuser   # this is your login, no /register/ endpoint
+python manage.py seed_categories   # optional: default categories
 
-# Terminal 2: Frontend (NEW WINDOW)
-cd budgeting-app/frontend
-npm install
-echo "NEXT_PUBLIC_API_URL=http://localhost:8100/api/" > .env.local
-npm run dev
+# Frontend
+cd ../frontend
+pnpm install
+cp .env.example .env.local         # edit: NEXT_PUBLIC_API_URL
 ```
 
-Visit:
-- Frontend: http://localhost:3100
-- Backend: http://localhost:8100/api/wallets/
-- Admin: http://localhost:8100/admin
+Generate a `SECRET_KEY`:
 
-**For detailed instructions, see [QUICK_START.md](QUICK_START.md)**
+```bash
+python -c "from django.core.management.utils import get_random_secret_key; print(get_random_secret_key())"
+```
 
----
+## Day-to-day (two terminals)
 
-## 📖 Start Learning
+```bash
+# Terminal 1 — backend
+cd backend && source venv/bin/activate
+python manage.py runserver 8100          # http://localhost:8100
 
-1. **Setup first**: Follow [QUICK_START.md](QUICK_START.md)
-2. **Study Django concepts**: Use [DJANGO_REFRESHER.md](DJANGO_REFRESHER.md) as reference
-3. **All code has comments**: Check `backend/wallets/*.py` files
+# Terminal 2 — frontend
+cd frontend
+pnpm dev                                  # http://localhost:3100
+```
+
+## Backend commands
+
+```bash
+source venv/bin/activate                  # always first, from backend/
+
+python manage.py makemigrations
+python manage.py migrate
+python manage.py createsuperuser
+python manage.py seed_categories                              # default categories for a user
+python manage.py process_recurring [--dry-run] [--force-date YYYY-MM-DD]
+python manage.py test                                          # or: python manage.py test wallets
+python manage.py check
+python manage.py shell
+```
+
+## Frontend commands
+
+```bash
+pnpm install
+pnpm dev                # http://localhost:3100
+pnpm build
+pnpm start               # serve production build
+pnpm lint
+npx tsc --noEmit         # typecheck
+```
+
+## Docker
+
+Not set up — no Dockerfile/compose in this repo. Dev runs via venv + `pnpm dev`; self-host runs the same way on the mini PC (see [RUNBOOK.md](RUNBOOK.md)).
+
+## Misc
+
+```bash
+# Find LAN IP (for self-host / testing from another device)
+ip addr show | grep 'inet ' | grep -v 127.0.0.1        # Linux
+ipconfig getifaddr en0                                   # macOS
+
+# Health check
+curl http://localhost:8100/api/health/
+```

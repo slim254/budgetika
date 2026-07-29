@@ -326,9 +326,12 @@ class GenericCSVImportService:
             amount_str = row.get(column_mapping["amount"], "").strip()
             date_str = row.get(column_mapping["date"], "").strip()
 
-            note = ""
-            if column_mapping.get("note"):
-                note = row.get(column_mapping["note"], "").strip()
+            note_cols = column_mapping.get("note") or []
+            if isinstance(note_cols, str):
+                note_cols = [note_cols] if note_cols else []
+            note = " - ".join(
+                v for v in (row.get(col, "").strip() for col in note_cols) if v
+            )
 
             tags_str = ""
             if column_mapping.get("tags"):

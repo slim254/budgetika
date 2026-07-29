@@ -27,7 +27,7 @@ python manage.py seed_categories        # optional: default categories
 
 # 5. Frontend
 cd ../frontend
-npm install
+pnpm install
 cp .env.example .env.local
 #   Edit .env.local: set NEXT_PUBLIC_API_URL=http://<mini-pc-ip>:8100/api/
 ```
@@ -41,7 +41,7 @@ python manage.py runserver 0.0.0.0:8100
 
 # Terminal 2 — frontend
 cd frontend
-npm run dev -- -H 0.0.0.0
+pnpm dev -- -H 0.0.0.0
 ```
 
 Open `http://<mini-pc-ip>:3100` from any device on the LAN. Health check: `curl http://<mini-pc-ip>:8100/api/health/` → `{"status": "ok"}`.
@@ -58,9 +58,9 @@ ip addr show | grep 'inet ' | grep -v 127.0.0.1
 cd backend && source venv/bin/activate
 pip install -r requirements.txt
 python manage.py migrate
-cd ../frontend && npm install
+cd ../frontend && pnpm install
 ```
 
 ## Appendix — run-on-boot + HTTPS (optional, not required for MVP)
 
-For always-on with auto-restart, use two `systemd` user services (backend `gunicorn config.wsgi`, frontend `next start` after `next build`). For HTTPS on the LAN without certificate hassle, put both behind **Tailscale** (`tailscale serve`) or a **Caddy** reverse proxy with a local CA. These are documented as a later production step — the `runserver`/`npm run dev` setup above is sufficient for personal daily use.
+For always-on with auto-restart, use two `systemd` user services (backend `gunicorn config.wsgi`, frontend `next start` after `next build`). For HTTPS on the LAN without certificate hassle, put both behind **Tailscale** (`tailscale serve`) or a **Caddy** reverse proxy with a local CA. These are documented as a later production step — the `runserver`/`pnpm dev` setup above is sufficient for personal daily use.

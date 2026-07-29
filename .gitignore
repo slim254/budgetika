@@ -39,6 +39,10 @@ frontend/.env.local
 # vercel
 .vercel
 
+# claude code local state (memory, session data)
+.claude/projects/
+.claude/settings.local.json
+
 # typescript
 *.tsbuildinfo
 next-env.d.ts
