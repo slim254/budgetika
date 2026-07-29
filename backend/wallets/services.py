@@ -58,14 +58,21 @@ DATE_FORMAT_CHOICES = ("auto", "DMY", "MDY", "YMD")
 DEFAULT_DATE_ORDER = "DMY"
 
 
-def _candidate_date_formats(order):
-    """strptime patterns for a component order, across separators and time suffixes."""
+def _candidate_date_formats(order, two_digit_year=True):
+    """strptime patterns for a component order, across separators and time suffixes.
+
+    two_digit_year=False keeps only four-digit-year patterns. A two-digit year
+    makes a date ambiguous again ("15.01.24" is a valid YMD, DMY and MDY date),
+    so those variants must never be tried ahead of the order the user chose.
+    """
     a, b, c = _DATE_ORDER_PARTS[order]
     formats = []
     for sep in ("-", "/", "."):
         base = sep.join((a, b, c))
         for suffix in ("", " %H:%M:%S", " %H:%M", "T%H:%M:%S", "T%H:%M"):
             formats.append(base + suffix)
+        if not two_digit_year:
+            continue
         # Two-digit year variant (15/01/24). %Y matches exactly four digits and
         # %y exactly two, so these can never shadow each other.
         short = base.replace("%Y", "%y")
@@ -75,6 +82,10 @@ def _candidate_date_formats(order):
 
 
 _CANDIDATE_FORMATS = {o: _candidate_date_formats(o) for o in _DATE_ORDER_PARTS}
+
+# Always accepted, whatever order was chosen: a four-digit leading year cannot
+# be a day or a month, so these are unambiguous.
+_ISO_YEAR_FIRST_FORMATS = _candidate_date_formats("YMD", two_digit_year=False)
 
 
 def get_rate(base: str, quote: str, rate_date: _date) -> Decimal:
@@ -528,12 +539,16 @@ class GenericCSVImportService:
         """
         Parse various date formats to timezone-aware datetime.
 
-        Order of attempts:
+        Parsing is STRICT to the resolved order for this import, so a file read
+        as day-first never silently reinterprets a row as month-first. Order of
+        attempts:
         1. ISO 8601 (unambiguous, most precise)
-        2. Year-first patterns (a four-digit leading year cannot be a day)
-        3. The resolved order for this import (self._date_order)
-        4. The remaining orders, as a last resort, so an odd row in an
-           otherwise consistent file still imports instead of erroring.
+        2. Four-digit year-first patterns — a leading 4-digit year cannot be a
+           day or a month, so these are safe under any chosen order
+        3. The resolved order for this import (self._date_order), including its
+           two-digit-year variants
+
+        Anything else raises, surfacing as a normal per-row import error.
 
         DRF LEARNING NOTE: Timezone Handling
         ====================================
@@ -569,14 +584,12 @@ class GenericCSVImportService:
         if order not in _DATE_ORDER_PARTS:
             order = DEFAULT_DATE_ORDER
 
-        tried = ["YMD", order] + [o for o in _DATE_ORDER_PARTS if o not in ("YMD", order)]
-        for candidate in dict.fromkeys(tried):
-            for fmt in _CANDIDATE_FORMATS[candidate]:
-                try:
-                    dt = datetime.datetime.strptime(date_str, fmt)
-                except ValueError:
-                    continue
-                return timezone.make_aware(dt)
+        for fmt in _ISO_YEAR_FIRST_FORMATS + _CANDIDATE_FORMATS[order]:
+            try:
+                dt = datetime.datetime.strptime(date_str, fmt)
+            except ValueError:
+                continue
+            return timezone.make_aware(dt)
 
         raise ValueError(f"Unrecognized date format: {date_str}")
 

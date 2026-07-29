@@ -71,8 +71,29 @@ class CSVImportDedupAndDateFormatTests(TestCase):
         )
         first = Transaction.objects.get(amount=-5)
         self.assertEqual((first.date.month, first.date.day), (2, 1))
-        # 01/25/2024 is not a valid DMY date, but the fallback still reads it.
-        self.assertEqual(res["stats"]["imported"], 2)
+        # Parsing is strict to the chosen order: 01/25/2024 is not a valid DMY
+        # date, so it errors rather than being silently re-read as MDY.
+        self.assertEqual(res["stats"]["imported"], 1)
+        self.assertEqual(res["stats"]["errors"], 1)
+        self.assertIn("Unrecognized date format", res["errors"][0]["error"])
+
+    def test_two_digit_year_uses_chosen_order_not_year_first(self):
+        # "15.01.24" is a valid date under YMD, DMY and MDY. Under DMY it must
+        # be 15 January 2024 — never 2015-01-24.
+        csv = "Date,Amount\n15.01.24,-5.00\n"
+        self._svc(csv).execute(
+            {"amount": "Amount", "date": "Date"}, {"mode": "signed"}, date_format="DMY"
+        )
+        t = Transaction.objects.get()
+        self.assertEqual((t.date.year, t.date.month, t.date.day), (2024, 1, 15))
+
+    def test_iso_dates_parse_under_any_chosen_order(self):
+        csv = "Date,Amount\n2024-01-15,-5.00\n"
+        self._svc(csv).execute(
+            {"amount": "Amount", "date": "Date"}, {"mode": "signed"}, date_format="MDY"
+        )
+        t = Transaction.objects.get()
+        self.assertEqual((t.date.year, t.date.month, t.date.day), (2024, 1, 15))
 
     def test_parse_reports_detection(self):
         csv = "Date,Amount,Note\n15/01/2024,-5.00,x\n"
