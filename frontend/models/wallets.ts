@@ -87,8 +87,14 @@ export interface CSVParseResponse {
     sample_rows: Record<string, string>[];
     total_rows: number;
     unique_values: Record<string, string[]>;
+    date_format: DateFormat;
+    date_format_ambiguous: boolean;
+    date_formats: Record<string, { format: DateFormat; ambiguous: boolean }>;
     error?: string;
 }
+
+export type DateFormat = 'DMY' | 'MDY' | 'YMD';
+export type DateFormatOption = 'auto' | DateFormat;
 
 export interface CSVColumnMapping {
     amount: string;

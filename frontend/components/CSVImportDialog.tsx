@@ -13,6 +13,7 @@ import {
   CSVExecuteResponse,
   ImportCategorySuggestion,
   Category,
+  DateFormatOption,
 } from "@/models/wallets";
 import { suggestImportCategories } from "@/api/ai";
 import { Switch } from "@/components/ui/switch";
@@ -87,6 +88,19 @@ const FILTER_OPERATORS: { value: FilterOperator; label: string }[] = [
   { value: "not_contains", label: "Not Contains" },
 ];
 
+const DATE_FORMAT_OPTIONS: { value: DateFormatOption; label: string }[] = [
+  { value: "auto", label: "Auto-detected" },
+  { value: "DMY", label: "DD/MM/YYYY" },
+  { value: "MDY", label: "MM/DD/YYYY" },
+  { value: "YMD", label: "YYYY-MM-DD" },
+];
+
+const DATE_FORMAT_LABELS: Record<string, string> = {
+  DMY: "DD/MM/YYYY",
+  MDY: "MM/DD/YYYY",
+  YMD: "YYYY-MM-DD",
+};
+
 const AMOUNT_MODES: { value: AmountMode; label: string; description: string }[] = [
   { value: "signed", label: "Signed Amount", description: "Amount column has +/- sign" },
   { value: "type_column", label: "Type Column", description: "Separate column for income/expense" },
@@ -108,6 +122,7 @@ export function CSVImportDialog({
 
   // File upload state
   const [file, setFile] = useState<File | null>(null);
+  const [isDraggingFile, setIsDraggingFile] = useState(false);
   const [parseResult, setParseResult] = useState<CSVParseResponse | null>(null);
 
   // Column mapping state (use special "__none__" value for optional fields)
@@ -119,6 +134,9 @@ export function CSVImportDialog({
     tags: "__none__",
     type: "__none__",
   });
+
+  // Date format state (chosen order to resolve ambiguous numeric dates)
+  const [dateFormat, setDateFormat] = useState<DateFormatOption>("auto");
 
   // Amount config state
   const [amountConfig, setAmountConfig] = useState<AmountConfig>({
@@ -159,8 +177,10 @@ export function CSVImportDialog({
   function resetState() {
     setStep("upload");
     setFile(null);
+    setIsDraggingFile(false);
     setParseResult(null);
     setColumnMapping({ amount: "", date: "", note: [], category: "__none__", tags: "__none__", type: "__none__" });
+    setDateFormat("auto");
     setAmountConfig({ mode: "signed", income_value: "", expense_value: "" });
     setFilters([]);
     setExecuteResult(null);
@@ -180,19 +200,45 @@ export function CSVImportDialog({
     onClose();
   }
 
+  function applySelectedFile(selectedFile: File) {
+    if (!selectedFile.name.endsWith(".csv")) {
+      setError("Please select a CSV file");
+      return;
+    }
+    if (selectedFile.size > 5 * 1024 * 1024) {
+      setError("File size must not exceed 5MB");
+      return;
+    }
+    setFile(selectedFile);
+    setError("");
+  }
+
   function handleFileSelect(e: React.ChangeEvent<HTMLInputElement>) {
     const selectedFile = e.target.files?.[0];
     if (selectedFile) {
-      if (!selectedFile.name.endsWith(".csv")) {
-        setError("Please select a CSV file");
-        return;
-      }
-      if (selectedFile.size > 5 * 1024 * 1024) {
-        setError("File size must not exceed 5MB");
-        return;
-      }
-      setFile(selectedFile);
-      setError("");
+      applySelectedFile(selectedFile);
+    }
+  }
+
+  function handleDragOver(e: React.DragEvent<HTMLDivElement>) {
+    e.preventDefault();
+    e.stopPropagation();
+    if (!isDraggingFile) setIsDraggingFile(true);
+  }
+
+  function handleDragLeave(e: React.DragEvent<HTMLDivElement>) {
+    e.preventDefault();
+    e.stopPropagation();
+    setIsDraggingFile(false);
+  }
+
+  function handleDrop(e: React.DragEvent<HTMLDivElement>) {
+    e.preventDefault();
+    e.stopPropagation();
+    setIsDraggingFile(false);
+    const droppedFile = e.dataTransfer.files?.[0];
+    if (droppedFile) {
+      applySelectedFile(droppedFile);
     }
   }
 
@@ -334,6 +380,7 @@ export function CSVImportDialog({
     formData.append("column_mapping", JSON.stringify(cleanedMapping));
     formData.append("amount_config", JSON.stringify(amountConfig));
     formData.append("filters", JSON.stringify(filters));
+    formData.append("date_format", dateFormat);
     return formData;
   }
 
@@ -475,9 +522,16 @@ export function CSVImportDialog({
               <div
                 className={cn(
                   "border-2 border-dashed rounded-lg p-8 text-center cursor-pointer transition-colors",
-                  file ? "border-green-500 bg-green-50" : "border-muted-foreground/25 hover:border-primary"
+                  file
+                    ? "border-green-500 bg-green-50"
+                    : isDraggingFile
+                    ? "border-primary bg-primary/5"
+                    : "border-muted-foreground/25 hover:border-primary"
                 )}
                 onClick={() => fileInputRef.current?.click()}
+                onDragOver={handleDragOver}
+                onDragLeave={handleDragLeave}
+                onDrop={handleDrop}
               >
                 <input
                   ref={fileInputRef}
@@ -657,6 +711,38 @@ export function CSVImportDialog({
                     Comma or semicolon separated tag names
                   </p>
                 </div>
+              </div>
+
+              <div className="space-y-2">
+                <div className="flex items-center gap-2">
+                  <Label>Date Format</Label>
+                  {parseResult.date_format_ambiguous && (
+                    <Badge variant="outline" className="gap-1 text-amber-600 border-amber-300">
+                      <AlertCircle className="h-3 w-3" /> Ambiguous — please confirm
+                    </Badge>
+                  )}
+                </div>
+                <Select
+                  value={dateFormat}
+                  onValueChange={(v) => setDateFormat(v as DateFormatOption)}
+                >
+                  <SelectTrigger className="w-full sm:w-[260px]">
+                    <SelectValue />
+                  </SelectTrigger>
+                  <SelectContent>
+                    {DATE_FORMAT_OPTIONS.map((opt) => (
+                      <SelectItem key={opt.value} value={opt.value}>
+                        {opt.label}
+                      </SelectItem>
+                    ))}
+                  </SelectContent>
+                </Select>
+                <p className="text-xs text-muted-foreground">
+                  Detected format: {DATE_FORMAT_LABELS[parseResult.date_format] ?? parseResult.date_format}
+                  {parseResult.date_format_ambiguous
+                    ? " — dates in this file could be read more than one way, please verify."
+                    : ""}
+                </p>
               </div>
 
               {/* Sample Data Preview */}
